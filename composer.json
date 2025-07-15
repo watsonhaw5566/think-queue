@@ -1,7 +1,6 @@
 {
     "name": "topthink/think-queue",
-    "description": "The ThinkPHP5 Queue Package",
-    "type": "think-extend",
+    "description": "The ThinkPHP6 Queue Package",
     "authors": [
         {
             "name": "yunwuxin",
@@ -17,16 +16,33 @@
             "src/common.php"
         ]
     },
+    "autoload-dev": {
+        "psr-4": {
+            "think\\test\\queue\\": "tests"
+        }
+    },
     "require": {
-        "topthink/think-helper": ">=1.0.4",
-        "topthink/think-installer": ">=1.0.10"
+        "ext-json": "*",
+        "topthink/framework": "^6.0 || ^8.0",
+        "symfony/process": ">=4.2",
+        "nesbot/carbon": ">=2.16"
     },
     "require-dev": {
         "topthink/framework": "~5.0.0"
     },
     "extra": {
-        "think-config": {
-            "queue": "src/config.php"
+        "think": {
+            "services": [
+                "think\\queue\\Service"
+            ],
+            "config": {
+                "queue": "src/config/queue.php"
+            }
         }
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^6.2",
+        "mockery/mockery": "^1.2",
+        "topthink/think-migration": "^3.0"
     }
 }
