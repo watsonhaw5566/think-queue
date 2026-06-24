@@ -24,6 +24,8 @@ class ListenerTest extends TestCase
         $listener->shouldReceive('memoryExceeded')->once()->with(1)->andReturn(false);
 
         $listener->runProcess($process, 1);
+
+        $this->addToAssertionCount(1);
     }
 
     public function testListenerStopsWhenMemoryIsExceeded()
@@ -37,6 +39,8 @@ class ListenerTest extends TestCase
         $listener->shouldReceive('stop')->once();
 
         $listener->runProcess($process, 1);
+
+        $this->addToAssertionCount(1);
     }
 
     public function testMakeProcessCorrectlyFormatsCommandLine()

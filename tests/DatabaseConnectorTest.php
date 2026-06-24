@@ -19,10 +19,10 @@ class DatabaseConnectorTest extends TestCase
     /** @var Db|MockInterface */
     protected $db;
 
-    protected function setUp()
+    protected function setUp(): void
     {
         parent::setUp();
-        $this->db        = m::mock(Db::class);
+        $this->db        = m::mock(\think\db\ConnectionInterface::class);
         $this->connector = new Database($this->db, 'table', 'default');
     }
 
@@ -34,8 +34,8 @@ class DatabaseConnectorTest extends TestCase
             $this->assertEquals('default', $array['queue']);
             $this->assertEquals(json_encode(['job' => 'foo', 'maxTries' => null, 'timeout' => null, 'data' => ['data']]), $array['payload']);
             $this->assertEquals(0, $array['attempts']);
-            $this->assertNull($array['reserved_at']);
-            $this->assertInternalType('int', $array['available_at']);
+            $this->assertNull($array['reserve_time']);
+            $this->assertIsInt($array['available_time']);
         });
         $this->connector->push('foo', ['data']);
     }
@@ -48,8 +48,8 @@ class DatabaseConnectorTest extends TestCase
             $this->assertEquals('default', $array['queue']);
             $this->assertEquals(json_encode(['job' => 'foo', 'maxTries' => null, 'timeout' => null, 'data' => ['data']]), $array['payload']);
             $this->assertEquals(0, $array['attempts']);
-            $this->assertNull($array['reserved_at']);
-            $this->assertInternalType('int', $array['available_at']);
+            $this->assertNull($array['reserve_time']);
+            $this->assertIsInt($array['available_time']);
         });
 
         $this->connector->later(10, 'foo', ['data']);
@@ -100,19 +100,19 @@ class DatabaseConnectorTest extends TestCase
         $query->shouldReceive('insertAll')->once()->andReturnUsing(function ($records) use ($now) {
             $this->assertEquals([
                 [
-                    'queue'        => 'queue',
-                    'payload'      => json_encode(['job' => 'foo', 'maxTries' => null, 'timeout' => null, 'data' => ['data']]),
-                    'attempts'     => 0,
-                    'reserved_at'  => null,
-                    'available_at' => $now->getTimestamp(),
-                    'created_at'   => $now->getTimestamp(),
+                    'queue'          => 'queue',
+                    'payload'        => json_encode(['job' => 'foo', 'maxTries' => null, 'timeout' => null, 'data' => ['data']]),
+                    'attempts'       => 0,
+                    'reserve_time'   => null,
+                    'available_time' => $now->getTimestamp(),
+                    'create_time'    => $now->getTimestamp(),
                 ], [
-                    'queue'        => 'queue',
-                    'payload'      => json_encode(['job' => 'bar', 'maxTries' => null, 'timeout' => null, 'data' => ['data']]),
-                    'attempts'     => 0,
-                    'reserved_at'  => null,
-                    'available_at' => $now->getTimestamp(),
-                    'created_at'   => $now->getTimestamp(),
+                    'queue'          => 'queue',
+                    'payload'        => json_encode(['job' => 'bar', 'maxTries' => null, 'timeout' => null, 'data' => ['data']]),
+                    'attempts'       => 0,
+                    'reserve_time'   => null,
+                    'available_time' => $now->getTimestamp(),
+                    'create_time'    => $now->getTimestamp(),
                 ],
             ], $records);
         });

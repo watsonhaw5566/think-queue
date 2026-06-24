@@ -31,7 +31,7 @@ class WorkerTest extends TestCase
     /** @var Queue|MockInterface */
     protected $queue;
 
-    protected function setUp()
+    protected function setUp(): void
     {
         parent::setUp();
         $this->queue  = m::mock(Queue::class);
@@ -45,10 +45,11 @@ class WorkerTest extends TestCase
 
         $worker = $this->getWorker(['default' => [$job = new WorkerFakeJob]]);
 
-        $this->event->shouldReceive('trigger')->with(m::type(JobProcessing::class))->once();
-        $this->event->shouldReceive('trigger')->with(m::type(JobProcessed::class))->once();
-
         $worker->runNextJob('sync', 'default');
+
+        $this->event->shouldHaveReceived('trigger')->with(m::type(JobProcessing::class))->once();
+        $this->event->shouldHaveReceived('trigger')->with(m::type(JobProcessed::class))->once();
+        $this->assertTrue($job->fired);
     }
 
     public function testWorkerCanWorkUntilQueueIsEmpty()
@@ -107,13 +108,14 @@ class WorkerTest extends TestCase
             throw $e;
         });
 
-        $this->queue->shouldReceive('driver')->with('sync')->andReturn($sync);
+        $this->queue->shouldReceive('connection')->with('sync')->andReturn($sync);
 
         $worker = new Worker($this->queue, $this->event, $this->handle);
 
         $worker->runNextJob('sync', 'default');
 
         $this->handle->shouldHaveReceived('report')->with($e);
+        $this->assertTrue(true);
     }
 
     public function testWorkerSleepsWhenQueueIsEmpty()
@@ -267,7 +269,7 @@ class WorkerTest extends TestCase
             return array_shift($jobs[$queue]);
         });
 
-        $this->queue->shouldReceive('driver')->with('sync')->andReturn($sync);
+        $this->queue->shouldReceive('connection')->with('sync')->andReturn($sync);
 
         return new Worker($this->queue, $this->event, $this->handle, $this->cache);
     }
