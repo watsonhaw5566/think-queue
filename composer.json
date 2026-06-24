@@ -5,6 +5,10 @@
     {
       "name": "yunwuxin",
       "email": "448901948@qq.com"
+    },
+    {
+      "name": "watsonhaw",
+      "email": "watsonhaw@hotmail.com"
     }
   ],
   "license": "Apache-2.0",
@@ -25,7 +29,8 @@
     "php": ">=8.0",
     "ext-json": "*",
     "symfony/process": ">=4.2",
-    "nesbot/carbon": ">=2.16"
+    "nesbot/carbon": ">=2.16",
+    "ext-redis": "*"
   },
   "require-dev": {
     "topthink/framework": "^8.0",
