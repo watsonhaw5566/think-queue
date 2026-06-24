@@ -16,6 +16,7 @@ use think\queue\event\JobFailed;
 use think\queue\event\JobProcessed;
 use think\queue\event\JobProcessing;
 use think\queue\exception\MaxAttemptsExceededException;
+use think\queue\Job;
 
 class WorkerTest extends TestCase
 {
@@ -303,21 +304,21 @@ class Worker extends \think\queue\Worker
 
     public $stoppedWithStatus;
 
-    public function sleep($seconds)
+    public function sleep(int $seconds): void
     {
         $this->sleptFor = $seconds;
     }
 
-    public function stop($status = 0)
+    public function stop(int $status = 0): void
     {
         $this->stoppedWithStatus = $status;
 
         throw new LoopBreakerException;
     }
 
-    protected function stopIfNecessary($job, $lastRestart, $memory)
+    protected function stopIfNecessary(?Job $job, mixed $lastRestart, int $memory): void
     {
-        if (is_null($job)) {
+        if ($job === null) {
             $this->stop();
         } else {
             parent::stopIfNecessary($job, $lastRestart, $memory);
@@ -325,20 +326,25 @@ class Worker extends \think\queue\Worker
     }
 }
 
-class WorkerFakeJob
+class LoopBreakerException extends RuntimeException
 {
+    //
+}
 
-    public $fired    = false;
-    public $callback;
-    public $deleted  = false;
-    public $releaseAfter;
-    public $released = false;
-    public $maxTries;
-    public $timeoutAt;
-    public $attempts = 0;
-    public $failedWith;
-    public $failed   = false;
-    public $connectionName;
+class WorkerFakeJob extends \think\queue\Job
+{
+    public bool $fired      = false;
+    public             $callback;
+    public             $releaseAfter;
+    public ?int        $maxTries   = null;
+    public ?int        $timeoutAt  = null;
+    public int         $attempts   = 0;
+    public ?\Throwable $failedWith = null;
+
+    // 从父类继承并重写为 public 以支持测试中直接读取。
+    public bool $deleted  = false;
+    public bool $released = false;
+    public bool $failed   = false;
 
     public function __construct($callback = null)
     {
@@ -347,83 +353,94 @@ class WorkerFakeJob
         };
     }
 
-    public function fire()
+    public function fire(): void
     {
         $this->fired = true;
-        $this->callback->__invoke($this);
+        ($this->callback)($this);
     }
 
-    public function payload()
+    public function payload(?string $name = null, mixed $default = null): mixed
     {
-        return [];
+        if ($name === null) {
+            return [];
+        }
+        return $default;
     }
 
-    public function maxTries()
+    public function maxTries(): ?int
     {
         return $this->maxTries;
     }
 
-    public function timeoutAt()
+    public function timeoutAt(): ?int
     {
         return $this->timeoutAt;
     }
 
-    public function delete()
+    public function delete(): void
     {
         $this->deleted = true;
     }
 
-    public function isDeleted()
+    public function isDeleted(): bool
     {
         return $this->deleted;
     }
 
-    public function release($delay)
+    public function release(int $delay = 0): void
     {
-        $this->released = true;
-
+        $this->released     = true;
         $this->releaseAfter = $delay;
     }
 
-    public function isReleased()
+    public function isReleased(): bool
     {
         return $this->released;
     }
 
-    public function attempts()
+    public function attempts(): int
     {
         return $this->attempts;
     }
 
-    public function markAsFailed()
+    public function markAsFailed(): void
     {
         $this->failed = true;
     }
 
-    public function failed($e)
+    public function failed(\Throwable $e): void
     {
         $this->markAsFailed();
-
         $this->failedWith = $e;
     }
 
-    public function hasFailed()
+    public function hasFailed(): bool
     {
         return $this->failed;
     }
 
-    public function timeout()
+    public function timeout(): ?int
     {
         return time() + 60;
     }
 
-    public function getName()
+    public function getName(): string
     {
         return 'WorkerFakeJob';
     }
-}
 
-class LoopBreakerException extends RuntimeException
-{
-    //
+    public function getJobId(): mixed
+    {
+        return null;
+    }
+
+    public function getRawBody(): string
+    {
+        return '';
+    }
+
+    public function getQueue(): string
+    {
+        return 'default';
+    }
 }

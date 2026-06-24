@@ -8,6 +8,7 @@ use Mockery\MockInterface;
 use ReflectionClass;
 use stdClass;
 use think\Db;
+use think\db\ConnectionInterface;
 use think\queue\Connector;
 use think\queue\connector\Database;
 use think\queue\job\Database as DatabaseJob;
@@ -23,7 +24,7 @@ class DatabaseConnectorTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->db        = m::mock(\think\db\ConnectionInterface::class);
+        $this->db        = m::mock(ConnectionInterface::class);
         $this->connector = new Database($this->db, 'table', 'default');
     }
 
@@ -84,8 +85,8 @@ class DatabaseConnectorTest extends TestCase
         $createPayload = $class->getMethod('createPayload');
         $createPayload->setAccessible(true);
         $createPayload->invokeArgs($queue, [
-            ["\xc3\x28"],
-            'queue-name',
+            'some-job',
+            ["key" => "\xc3\x28"],
         ]);
     }
 
