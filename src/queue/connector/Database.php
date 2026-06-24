@@ -22,113 +22,110 @@ use think\queue\job\Database as DatabaseJob;
 
 class Database extends Connector
 {
-
     use InteractsWithTime;
 
-    protected $db;
+    protected ConnectionInterface $db;
 
-    /**
-     * The database table that holds the jobs.
-     *
-     * @var string
-     */
-    protected $table;
+    protected string $table;
 
-    /**
-     * The name of the default queue.
-     *
-     * @var string
-     */
-    protected $default;
+    protected string $default;
 
-    /**
-     * The expiration time of a job.
-     *
-     * @var int|null
-     */
-    protected $retryAfter = 60;
+    protected int $retryAfter = 60;
 
-    public function __construct(ConnectionInterface $db, $table, $default = 'default', $retryAfter = 60)
-    {
+    public function __construct(
+        ConnectionInterface $db,
+        string $table,
+        string $default = 'default',
+        int $retryAfter = 60,
+    ) {
         $this->db         = $db;
         $this->table      = $table;
         $this->default    = $default;
         $this->retryAfter = $retryAfter;
     }
 
-    public static function __make(Db $db, $config)
+    /**
+     * @param array<string, mixed> $config
+     */
+    public static function __make(Db $db, array $config): self
     {
         $connection = $db->connect($config['connection'] ?? null);
 
-        return new self($connection, $config['table'], $config['queue'], $config['retry_after'] ?? 60);
+        return new self(
+            $connection,
+            (string) $config['table'],
+            (string) ($config['queue'] ?? 'default'),
+            (int) ($config['retry_after'] ?? 60),
+        );
     }
 
-    public function size($queue = null)
+    public function size(?string $queue = null): int
     {
-        return $this->db
+        return (int) $this->db
             ->name($this->table)
             ->where('queue', $this->getQueue($queue))
             ->count();
     }
 
-    public function push($job, $data = '', $queue = null)
+    public function push(object|string $job, mixed $data = '', ?string $queue = null): mixed
     {
         return $this->pushToDatabase($queue, $this->createPayload($job, $data));
     }
 
-    public function pushRaw($payload, $queue = null, array $options = [])
+    public function pushRaw(string $payload, ?string $queue = null, array $options = []): mixed
     {
         return $this->pushToDatabase($queue, $payload);
     }
 
-    public function later($delay, $job, $data = '', $queue = null)
+    public function later(\DateTimeInterface|int $delay, object|string $job, mixed $data = '', ?string $queue = null): mixed
     {
         return $this->pushToDatabase($queue, $this->createPayload($job, $data), $delay);
     }
 
-    public function bulk($jobs, $data = '', $queue = null)
+    /**
+     * @param iterable<int, object|string> $jobs
+     * @param mixed $data
+     */
+    public function bulk(iterable $jobs, mixed $data = '', ?string $queue = null): void
     {
         $queue = $this->getQueue($queue);
-
         $availableAt = $this->availableAt();
+        $currentTime = $this->currentTime();
 
-        return $this->db->name($this->table)->insertAll(collect((array) $jobs)->map(
-            function ($job) use ($queue, $data, $availableAt) {
-                return [
-                    'queue'          => $queue,
-                    'attempts'       => 0,
-                    'reserve_time'   => null,
-                    'available_time' => $availableAt,
-                    'create_time'    => $this->currentTime(),
-                    'payload'        => $this->createPayload($job, $data),
-                ];
-            }
-        )->all());
+        $rows = [];
+        foreach ($jobs as $job) {
+            $rows[] = [
+                'queue'          => $queue,
+                'attempts'       => 0,
+                'reserve_time'   => null,
+                'available_time' => $availableAt,
+                'create_time'    => $currentTime,
+                'payload'        => $this->createPayload($job, $data),
+            ];
+        }
+
+        if ($rows !== []) {
+            $this->db->name($this->table)->insertAll($rows);
+        }
     }
 
     /**
      * 重新发布任务
-     *
-     * @param string $queue
-     * @param StdClass $job
-     * @param int $delay
-     * @return mixed
      */
-    public function release($queue, $job, $delay)
+    public function release(string $queue, stdClass $job, int $delay): mixed
     {
-        return $this->pushToDatabase($queue, $job->payload, $delay, $job->attempts);
+        return $this->pushToDatabase(
+            $queue,
+            is_string($job->payload) ? $job->payload : (string) $job->payload,
+            $delay,
+            (int) $job->attempts
+        );
     }
 
     /**
      * Push a raw payload to the database with a given delay.
-     *
-     * @param \DateTime|int $delay
-     * @param string|null $queue
-     * @param string $payload
-     * @param int $attempts
-     * @return mixed
      */
-    protected function pushToDatabase($queue, $payload, $delay = 0, $attempts = 0)
+    protected function pushToDatabase(?string $queue, string $payload, \DateTimeInterface|int $delay = 0, int $attempts = 0): mixed
     {
         return $this->db->name($this->table)->insertGetId([
             'queue'          => $this->getQueue($queue),
@@ -140,89 +137,98 @@ class Database extends Connector
         ]);
     }
 
-    public function pop($queue = null)
+    public function pop(?string $queue = null): ?DatabaseJob
     {
         $queue = $this->getQueue($queue);
 
-        return $this->db->transaction(function () use ($queue) {
-
-            if ($job = $this->getNextAvailableJob($queue)) {
-
-                $job = $this->markJobAsReserved($job);
-
-                return new DatabaseJob($this->app, $this, $job, $this->connection, $queue);
+        $result = $this->db->transaction(function () use ($queue): ?DatabaseJob {
+            $job = $this->getNextAvailableJob($queue);
+            if ($job === null) {
+                return null;
             }
+
+            $job = $this->markJobAsReserved($job);
+
+            return new DatabaseJob($this->app, $this, $job, $this->connection, $queue);
         });
+
+        return $result instanceof DatabaseJob ? $result : null;
     }
 
     /**
-     * 获取下个有效任务
-     *
-     * @param string|null $queue
-     * @return StdClass|null
+     * 获取下个有效任务。通过 SELECT … FOR UPDATE 锁定行，避免并发 worker 拿到同一任务。
      */
-    protected function getNextAvailableJob($queue)
+    protected function getNextAvailableJob(string $queue): ?stdClass
     {
+        $expiration = Carbon::now()->subSeconds($this->retryAfter)->getTimestamp();
 
         $job = $this->db
             ->name($this->table)
             ->lock(true)
             ->where('queue', $this->getQueue($queue))
-            ->where(function (Query $query) {
-                $query->where(function (Query $query) {
+            ->where(function (Query $query) use ($expiration): void {
+                $query->where(function (Query $query): void {
                     $query->whereNull('reserve_time')
-                          ->where('available_time', '<=', $this->currentTime());
+                        ->where('available_time', '<=', $this->currentTime());
                 });
 
-                //超时任务重试
-                $expiration = Carbon::now()->subSeconds($this->retryAfter)->getTimestamp();
-
-                $query->whereOr(function (Query $query) use ($expiration) {
-                    $query->where('reserve_time', '<=', $expiration);
+                $query->whereOr(function (Query $query) use ($expiration): void {
+                    $query->whereNotNull('reserve_time')
+                        ->where('reserve_time', '<=', $expiration);
                 });
             })
             ->order('id', 'asc')
             ->find();
 
-        return $job ? (object) $job : null;
+        if ($job === null || $job === false) {
+            return null;
+        }
+
+        return (object) $job;
     }
 
     /**
-     * 标记任务正在执行.
-     *
-     * @param stdClass $job
-     * @return stdClass
+     * 标记任务正在执行。
      */
-    protected function markJobAsReserved($job)
+    protected function markJobAsReserved(stdClass $job): stdClass
     {
-        $this->db
+        $job->reserve_time = $this->currentTime();
+        $job->attempts     = ((int) $job->attempts) + 1;
+
+        $updated = $this->db
             ->name($this->table)
             ->where('id', $job->id)
             ->update([
-                'reserve_time' => $job->reserve_time = $this->currentTime(),
-                'attempts'     => ++$job->attempts,
+                'reserve_time' => $job->reserve_time,
+                'attempts'     => $job->attempts,
             ]);
+
+        // 受影响行数为 0 意味着在读取和更新之间有变化 — 让上层处理这种竞态。
+        if ($updated === 0) {
+            return $job;
+        }
 
         return $job;
     }
 
     /**
-     * 删除任务
-     *
-     * @param string $id
-     * @return void
+     * 删除任务。在事务中执行，并使用乐观锁防止重复删除。
      */
-    public function deleteReserved($id)
+    public function deleteReserved(mixed $id): void
     {
-        $this->db->transaction(function () use ($id) {
-            if ($this->db->name($this->table)->lock(true)->find($id)) {
-                $this->db->name($this->table)->where('id', $id)->delete();
+        $this->db->transaction(function () use ($id): void {
+            $row = $this->db->name($this->table)->lock(true)->find($id);
+
+            if ($row === null || $row === false || $row === []) {
+                return;
             }
+
+            $this->db->name($this->table)->where('id', $id)->delete();
         });
     }
 
-    protected function getQueue($queue)
+    protected function getQueue(?string $queue): string
     {
-        return $queue ?: $this->default;
+        return $queue ?? $this->default;
     }
 }

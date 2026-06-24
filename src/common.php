@@ -14,13 +14,12 @@ use think\facade\Queue;
 if (!function_exists('queue')) {
 
     /**
-     * 添加到队列
-     * @param        $job
-     * @param string $data
-     * @param int    $delay
-     * @param null   $queue
+     * 添加任务到队列。
+     *
+     * @param object|string $job
+     * @param mixed $data
      */
-    function queue($job, $data = '', $delay = 0, $queue = null)
+    function queue(object|string $job, mixed $data = '', int $delay = 0, ?string $queue = null): void
     {
         if ($delay > 0) {
             Queue::later($delay, $job, $data, $queue);

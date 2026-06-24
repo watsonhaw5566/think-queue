@@ -17,28 +17,20 @@ use think\queue\Job;
 
 class Redis extends Job
 {
+    protected RedisQueue $redis;
 
-    /**
-     * The redis queue instance.
-     * @var RedisQueue
-     */
-    protected $redis;
+    protected string $job;
 
-    /**
-     * The database job payload.
-     * @var Object
-     */
-    protected $job;
+    protected string $reserved;
 
-    /**
-     * The Redis job payload inside the reserved queue.
-     *
-     * @var string
-     */
-    protected $reserved;
-
-    public function __construct(App $app, RedisQueue $redis, $job, $reserved, $connection, $queue)
-    {
+    public function __construct(
+        App $app,
+        RedisQueue $redis,
+        string $job,
+        string $reserved,
+        string $connection,
+        string $queue,
+    ) {
         $this->app        = $app;
         $this->job        = $job;
         $this->queue      = $queue;
@@ -47,65 +39,38 @@ class Redis extends Job
         $this->reserved   = $reserved;
     }
 
-    /**
-     * Get the number of times the job has been attempted.
-     * @return int
-     */
-    public function attempts()
+    public function attempts(): int
     {
-        return $this->payload('attempts') + 1;
+        $attempts = $this->payload('attempts', 0);
+
+        return (int) $attempts + 1;
     }
 
-    /**
-     * Get the raw body string for the job.
-     * @return string
-     */
-    public function getRawBody()
+    public function getRawBody(): string
     {
         return $this->job;
     }
 
-    /**
-     * 删除任务
-     *
-     * @return void
-     */
-    public function delete()
+    public function delete(): void
     {
         parent::delete();
 
         $this->redis->deleteReserved($this->queue, $this);
     }
 
-    /**
-     * 重新发布任务
-     *
-     * @param int $delay
-     * @return void
-     */
-    public function release($delay = 0)
+    public function release(int $delay = 0): void
     {
         parent::release($delay);
 
         $this->redis->deleteAndRelease($this->queue, $this, $delay);
     }
 
-    /**
-     * Get the job identifier.
-     *
-     * @return string
-     */
-    public function getJobId()
+    public function getJobId(): mixed
     {
         return $this->payload('id');
     }
 
-    /**
-     * Get the underlying reserved Redis job.
-     *
-     * @return string
-     */
-    public function getReservedJob()
+    public function getReservedJob(): string
     {
         return $this->reserved;
     }

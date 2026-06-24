@@ -18,77 +18,67 @@ use think\App;
 
 class Listener
 {
+    protected string $commandPath;
+
+    protected string $workerCommand = '';
+
+    protected ?Closure $outputHandler = null;
 
     /**
-     * @var string
+     * 指示 Listener 是否应当退出主循环。
      */
-    protected $commandPath;
+    private bool $shouldQuit = false;
 
-    /**
-     * @var string
-     */
-    protected $workerCommand;
-
-    /**
-     * @var \Closure|null
-     */
-    protected $outputHandler;
-
-    /**
-     * @param string $commandPath
-     */
-    public function __construct($commandPath)
+    public function __construct(string $commandPath)
     {
         $this->commandPath = $commandPath;
     }
 
-    public static function __make(App $app)
+    public static function __make(App $app): self
     {
-        return new self($app->getRootPath());
+        return new self((string) $app->getRootPath());
     }
 
-    /**
-     * Get the PHP binary.
-     *
-     * @return string
-     */
-    protected function phpBinary()
+    protected function phpBinary(): string
     {
-        return (new PhpExecutableFinder)->find(false);
+        $binary = (new PhpExecutableFinder())->find(false);
+
+        return is_string($binary) && $binary !== '' ? $binary : PHP_BINARY;
     }
 
-    /**
-     * @param string $connection
-     * @param string $queue
-     * @param int    $delay
-     * @param int    $sleep
-     * @param int    $maxTries
-     * @param int    $memory
-     * @param int    $timeout
-     * @return void
-     */
-    public function listen($connection, $queue, $delay = 0, $sleep = 3, $maxTries = 0, $memory = 128, $timeout = 60)
-    {
+    public function listen(
+        string $connection,
+        string $queue,
+        int $delay = 0,
+        int $sleep = 3,
+        int $maxTries = 0,
+        int $memory = 128,
+        int $timeout = 60,
+    ): void {
+        $this->registerSignals();
+
         $process = $this->makeProcess($connection, $queue, $delay, $sleep, $maxTries, $memory, $timeout);
 
-        while (true) {
+        while (!$this->shouldQuit) {
             $this->runProcess($process, $memory);
+
+            // 避免 CPU 空转：每次 worker 退出后短暂睡眠。
+            if (!$this->shouldQuit) {
+                usleep(100000);
+            }
         }
     }
 
-    /**
-     * @param string $connection
-     * @param string $queue
-     * @param int    $delay
-     * @param int    $sleep
-     * @param int    $maxTries
-     * @param int    $memory
-     * @param int    $timeout
-     * @return Process
-     */
-    public function makeProcess($connection, $queue, $delay, $sleep, $maxTries, $memory, $timeout)
-    {
-        $command = array_filter([
+    public function makeProcess(
+        string $connection,
+        string $queue,
+        int $delay,
+        int $sleep,
+        int $maxTries,
+        int $memory,
+        int $timeout,
+    ): Process {
+        $command = array_values(array_filter([
             $this->phpBinary(),
             'think',
             'queue:work',
@@ -99,64 +89,56 @@ class Listener
             "--memory={$memory}",
             "--sleep={$sleep}",
             "--tries={$maxTries}",
-        ], function ($value) {
-            return !is_null($value);
-        });
+        ], static fn ($value): bool => $value !== null));
 
         return new Process($command, $this->commandPath, null, null, $timeout);
     }
 
-    /**
-     * @param Process $process
-     * @param int     $memory
-     */
-    public function runProcess(Process $process, $memory)
+    public function runProcess(Process $process, int $memory): void
     {
-        $process->run(function ($type, $line) {
+        $process->run(function (int $type, string $line): void {
             $this->handleWorkerOutput($type, $line);
         });
 
-        if ($this->memoryExceeded($memory)) {
+        if ($this->memoryExceeded($memory) || $this->shouldQuit) {
             $this->stop();
         }
     }
 
-    /**
-     * @param int    $type
-     * @param string $line
-     * @return void
-     */
-    protected function handleWorkerOutput($type, $line)
+    protected function handleWorkerOutput(int $type, string $line): void
     {
-        if (isset($this->outputHandler)) {
-            call_user_func($this->outputHandler, $type, $line);
+        if ($this->outputHandler !== null) {
+            ($this->outputHandler)($type, $line);
         }
     }
 
-    /**
-     * @param int $memoryLimit
-     * @return bool
-     */
-    public function memoryExceeded($memoryLimit)
+    public function memoryExceeded(int $memoryLimit): bool
     {
-        return (memory_get_usage() / 1024 / 1024) >= $memoryLimit;
+        return (memory_get_usage(true) / 1024 / 1024) >= $memoryLimit;
     }
 
-    /**
-     * @return void
-     */
-    public function stop()
+    public function stop(): never
     {
-        die;
+        exit(0);
     }
 
-    /**
-     * @param \Closure $outputHandler
-     * @return void
-     */
-    public function setOutputHandler(Closure $outputHandler)
+    public function setOutputHandler(Closure $outputHandler): void
     {
         $this->outputHandler = $outputHandler;
     }
 
+    private function registerSignals(): void
+    {
+        if (!extension_loaded('pcntl') || !function_exists('pcntl_async_signals')) {
+            return;
+        }
+
+        pcntl_async_signals(true);
+
+        foreach ([SIGTERM, SIGINT] as $signal) {
+            pcntl_signal($signal, function (): void {
+                $this->shouldQuit = true;
+            });
+        }
+    }
 }

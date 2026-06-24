@@ -23,12 +23,7 @@ use think\queue\Worker;
 
 class Work extends Command
 {
-
-    /**
-     * The queue worker instance.
-     * @var Worker
-     */
-    protected $worker;
+    protected Worker $worker;
 
     public function __construct(Worker $worker)
     {
@@ -36,7 +31,7 @@ class Work extends Command
         $this->worker = $worker;
     }
 
-    protected function configure()
+    protected function configure(): void
     {
         $this->setName('queue:work')
             ->addArgument('connection', Argument::OPTIONAL, 'The name of the queue connection to work', null)
@@ -51,46 +46,43 @@ class Work extends Command
             ->setDescription('Process the next job on a queue');
     }
 
-    /**
-     * Execute the console command.
-     * @param Input  $input
-     * @param Output $output
-     * @return int|null|void
-     */
-    public function execute(Input $input, Output $output)
+    public function execute(Input $input, Output $output): ?int
     {
-        $connection = $input->getArgument('connection') ?: $this->app->config->get('queue.default');
+        $connection = (string) ($input->getArgument('connection') ?: $this->app->config->get('queue.default', 'sync'));
 
-        $queue = $input->getOption('queue') ?: $this->app->config->get("queue.connections.{$connection}.queue", 'default');
-        $delay = $input->getOption('delay');
-        $sleep = $input->getOption('sleep');
-        $tries = $input->getOption('tries');
+        $queue = (string) ($input->getOption('queue')
+            ?: $this->app->config->get("queue.connections.{$connection}.queue", 'default'));
+
+        $delay = (int) $input->getOption('delay');
+        $sleep = (int) $input->getOption('sleep');
+        $tries = (int) $input->getOption('tries');
 
         $this->listenForEvents();
 
         if ($input->getOption('once')) {
             $this->worker->runNextJob($connection, $queue, $delay, $sleep, $tries);
-        } else {
-            $memory  = $input->getOption('memory');
-            $timeout = $input->getOption('timeout');
-            $this->worker->daemon($connection, $queue, $delay, $sleep, $tries, $memory, $timeout);
+            return 0;
         }
+
+        $memory  = (int) $input->getOption('memory');
+        $timeout = (int) $input->getOption('timeout');
+
+        $this->worker->daemon($connection, $queue, $delay, $sleep, $tries, $memory, $timeout);
+
+        return 0;
     }
 
-    /**
-     * 注册事件
-     */
-    protected function listenForEvents()
+    protected function listenForEvents(): void
     {
-        $this->app->event->listen(JobProcessing::class, function (JobProcessing $event) {
+        $this->app->event->listen(JobProcessing::class, function (JobProcessing $event): void {
             $this->writeOutput($event->job, 'starting');
         });
 
-        $this->app->event->listen(JobProcessed::class, function (JobProcessed $event) {
+        $this->app->event->listen(JobProcessed::class, function (JobProcessed $event): void {
             $this->writeOutput($event->job, 'success');
         });
 
-        $this->app->event->listen(JobFailed::class, function (JobFailed $event) {
+        $this->app->event->listen(JobFailed::class, function (JobFailed $event): void {
             $this->writeOutput($event->job, 'failed');
 
             $this->logFailedJob($event);
@@ -98,57 +90,39 @@ class Work extends Command
     }
 
     /**
-     * Write the status output for the queue worker.
-     *
-     * @param Job $job
-     * @param     $status
+     * @param 'starting'|'success'|'failed' $status
      */
-    protected function writeOutput(Job $job, $status)
+    protected function writeOutput(Job $job, string $status): void
     {
-        switch ($status) {
-            case 'starting':
-                $this->writeStatus($job, 'Processing', 'comment');
-                break;
-            case 'success':
-                $this->writeStatus($job, 'Processed', 'info');
-                break;
-            case 'failed':
-                $this->writeStatus($job, 'Failed', 'error');
-                break;
-        }
+        match ($status) {
+            'starting' => $this->writeStatus($job, 'Processing', 'comment'),
+            'success'  => $this->writeStatus($job, 'Processed', 'info'),
+            'failed'   => $this->writeStatus($job, 'Failed', 'error'),
+        };
     }
 
-    /**
-     * Format the status output for the queue worker.
-     *
-     * @param Job    $job
-     * @param string $status
-     * @param string $type
-     * @return void
-     */
-    protected function writeStatus(Job $job, $status, $type)
+    protected function writeStatus(Job $job, string $status, string $type): void
     {
         $this->output->writeln(sprintf(
             "<{$type}>[%s][%s] %s</{$type}> %s",
             date('Y-m-d H:i:s'),
-            $job->getJobId(),
+            (string) $job->getJobId(),
             str_pad("{$status}:", 11),
             $job->getName()
         ));
     }
 
-    /**
-     * 记录失败任务
-     * @param JobFailed $event
-     */
-    protected function logFailedJob(JobFailed $event)
+    protected function logFailedJob(JobFailed $event): void
     {
-        $this->app['queue.failer']->log(
-            $event->connection,
-            $event->job->getQueue(),
-            $event->job->getRawBody(),
-            $event->exception
-        );
-    }
+        $failer = $this->app['queue.failer'];
 
+        if (is_object($failer) && method_exists($failer, 'log')) {
+            $failer->log(
+                $event->connection,
+                $event->job->getQueue(),
+                $event->job->getRawBody(),
+                $event->exception
+            );
+        }
+    }
 }

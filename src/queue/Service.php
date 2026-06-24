@@ -17,22 +17,26 @@ use think\queue\command\Work;
 
 class Service extends \think\Service
 {
-    public function register()
+    public function register(): void
     {
         $this->app->bind('queue', Queue::class);
-        $this->app->bind('queue.failer', function () {
-
+        $this->app->bind('queue.failer', function (): object {
             $config = $this->app->config->get('queue.failed', []);
+            if (!is_array($config)) {
+                $config = [];
+            }
 
-            $type = Arr::pull($config, 'type', 'none');
+            $type = (string) Arr::pull($config, 'type', 'none');
 
-            $class = false !== strpos($type, '\\') ? $type : '\\think\\queue\\failed\\' . Str::studly($type);
+            $class = str_contains($type, '\\')
+                ? $type
+                : '\\think\\queue\\failed\\' . Str::studly($type);
 
             return $this->app->invokeClass($class, [$config]);
         });
     }
 
-    public function boot()
+    public function boot(): void
     {
         $this->commands([
             FailedJob::class,

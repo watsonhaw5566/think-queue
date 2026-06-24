@@ -16,19 +16,15 @@ use think\queue\Job;
 
 class Database extends Job
 {
-    /**
-     * The database queue instance.
-     * @var DatabaseQueue
-     */
-    protected $database;
+    protected DatabaseQueue $database;
+
+    /** @var object{id: mixed, payload: string, attempts: int} */
+    protected object $job;
 
     /**
-     * The database job payload.
-     * @var Object
+     * @param object{id: mixed, payload: string, attempts: int} $job
      */
-    protected $job;
-
-    public function __construct(App $app, DatabaseQueue $database, $job, $connection, $queue)
+    public function __construct(App $app, DatabaseQueue $database, object $job, string $connection, string $queue)
     {
         $this->app        = $app;
         $this->job        = $job;
@@ -37,22 +33,13 @@ class Database extends Job
         $this->connection = $connection;
     }
 
-    /**
-     * 删除任务
-     * @return void
-     */
-    public function delete()
+    public function delete(): void
     {
         parent::delete();
         $this->database->deleteReserved($this->job->id);
     }
 
-    /**
-     * 重新发布任务
-     * @param int $delay
-     * @return void
-     */
-    public function release($delay = 0)
+    public function release(int $delay = 0): void
     {
         parent::release($delay);
 
@@ -61,30 +48,17 @@ class Database extends Job
         $this->database->release($this->queue, $this->job, $delay);
     }
 
-    /**
-     * 获取当前任务尝试次数
-     * @return int
-     */
-    public function attempts()
+    public function attempts(): int
     {
-        return (int) $this->job->attempts;
+        return (int) ($this->job->attempts ?? 0);
     }
 
-    /**
-     * Get the raw body string for the job.
-     * @return string
-     */
-    public function getRawBody()
+    public function getRawBody(): string
     {
-        return $this->job->payload;
+        return (string) $this->job->payload;
     }
 
-    /**
-     * Get the job identifier.
-     *
-     * @return string
-     */
-    public function getJobId()
+    public function getJobId(): mixed
     {
         return $this->job->id;
     }

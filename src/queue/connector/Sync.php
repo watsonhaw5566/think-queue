@@ -21,25 +21,24 @@ use Throwable;
 
 class Sync extends Connector
 {
-
-    public function size($queue = null)
+    public function size(?string $queue = null): int
     {
         return 0;
     }
 
-    public function push($job, $data = '', $queue = null)
+    public function push(object|string $job, mixed $data = '', ?string $queue = null): int
     {
-        $queueJob = $this->resolveJob($this->createPayload($job, $data), $queue);
+        $payload  = $this->createPayload($job, $data);
+        $queueJob = $this->resolveJob($payload, $queue);
 
         try {
-            $this->triggerEvent(new JobProcessing($this->connection, $job));
+            $this->triggerEvent(new JobProcessing($this->connection, $queueJob));
 
             $queueJob->fire();
 
-            $this->triggerEvent(new JobProcessed($this->connection, $job));
+            $this->triggerEvent(new JobProcessed($this->connection, $queueJob));
         } catch (Exception | Throwable $e) {
-
-            $this->triggerEvent(new JobFailed($this->connection, $job, $e));
+            $this->triggerEvent(new JobFailed($this->connection, $queueJob, $e));
 
             throw $e;
         }
@@ -47,27 +46,28 @@ class Sync extends Connector
         return 0;
     }
 
-    protected function triggerEvent($event)
+    protected function triggerEvent(object $event): void
     {
         $this->app->event->trigger($event);
     }
 
-    public function pop($queue = null)
+    public function pop(?string $queue = null): ?SyncJob
     {
-
+        return null;
     }
 
-    protected function resolveJob($payload, $queue)
+    protected function resolveJob(string $payload, ?string $queue): SyncJob
     {
         return new SyncJob($this->app, $payload, $this->connection, $queue);
     }
 
-    public function pushRaw($payload, $queue = null, array $options = [])
+    public function pushRaw(string $payload, ?string $queue = null, array $options = []): void
     {
-
+        // Sync connector has no queue; this method is required by the contract
+        // but pushing raw payloads in a synchronous context is a no-op.
     }
 
-    public function later($delay, $job, $data = '', $queue = null)
+    public function later(\DateTimeInterface|int $delay, object|string $job, mixed $data = '', ?string $queue = null): int
     {
         return $this->push($job, $data, $queue);
     }

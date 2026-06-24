@@ -11,199 +11,145 @@
 
 namespace think\queue;
 
-use Exception;
+use Throwable;
 use think\App;
 use think\helper\Arr;
 use think\helper\Str;
 
 abstract class Job
 {
+    private ?object $instance = null;
+
+    /** @var array<string, mixed>|null */
+    private ?array $payload = null;
+
+    protected App $app;
+
+    protected string $queue = '';
+
+    protected string $connection = '';
+
+    protected bool $deleted = false;
+
+    protected bool $released = false;
+
+    protected bool $failed = false;
 
     /**
-     * The job handler instance.
-     * @var object
-     */
-    private $instance;
-
-    /**
-     *  The JSON decoded version of "$job".
-     * @var array
-     */
-    private $payload;
-
-    /**
-     * @var App
-     */
-    protected $app;
-
-    /**
-     * The name of the queue the job belongs to.
-     * @var string
-     */
-    protected $queue;
-
-    /**
-     * The name of the connection the job belongs to.
-     */
-    protected $connection;
-
-    /**
-     * Indicates if the job has been deleted.
-     * @var bool
-     */
-    protected $deleted = false;
-
-    /**
-     * Indicates if the job has been released.
-     * @var bool
-     */
-    protected $released = false;
-
-    /**
-     * Indicates if the job has failed.
+     * 获取解码后的 payload，或 payload 中的某个字段。
      *
-     * @var bool
+     * @return array<string, mixed>|mixed
      */
-    protected $failed = false;
-
-    /**
-     * Get the decoded body of the job.
-     *
-     * @return mixed
-     */
-    public function payload($name = null, $default = null)
+    public function payload(?string $name = null, mixed $default = null): mixed
     {
-        if (empty($this->payload)) {
-            $this->payload = json_decode($this->getRawBody(), true);
+        if ($this->payload === null) {
+            $decoded = json_decode($this->getRawBody(), true);
+            $this->payload = is_array($decoded) ? $decoded : [];
         }
-        if (empty($name)) {
+
+        if ($name === null || $name === '') {
             return $this->payload;
         }
+
         return Arr::get($this->payload, $name, $default);
     }
 
-    /**
-     * Fire the job.
-     * @return void
-     */
-    public function fire()
+    public function fire(): void
     {
         $instance = $this->getResolvedJob();
 
         [, $method] = $this->getParsedJob();
 
+        if (!is_object($instance) || !method_exists($instance, (string) $method)) {
+            throw new \RuntimeException(
+                sprintf('Job handler method "%s" does not exist on "%s".', $method, get_class($instance))
+            );
+        }
+
         $instance->{$method}($this, $this->payload('data'));
     }
 
-    /**
-     * Process an exception that caused the job to fail.
-     *
-     * @param Exception $e
-     * @return void
-     */
-    public function failed($e)
+    public function failed(Throwable $e): void
     {
-        $instance = $this->getResolvedJob();
+        try {
+            $instance = $this->getResolvedJob();
+        } catch (Throwable $resolveException) {
+            // 无法解析 handler，跳过自定义失败回调。
+            return;
+        }
 
         if (method_exists($instance, 'failed')) {
             $instance->failed($this->payload('data'), $e);
         }
     }
 
-    /**
-     * Delete the job from the queue.
-     * @return void
-     */
-    public function delete()
+    public function delete(): void
     {
         $this->deleted = true;
     }
 
-    /**
-     * Determine if the job has been deleted.
-     * @return bool
-     */
-    public function isDeleted()
+    public function isDeleted(): bool
     {
         return $this->deleted;
     }
 
-    /**
-     * Release the job back into the queue.
-     * @param int $delay
-     * @return void
-     */
-    public function release($delay = 0)
+    public function release(int $delay = 0): void
     {
         $this->released = true;
     }
 
-    /**
-     * Determine if the job was released back into the queue.
-     * @return bool
-     */
-    public function isReleased()
+    public function isReleased(): bool
     {
         return $this->released;
     }
 
-    /**
-     * Determine if the job has been deleted or released.
-     * @return bool
-     */
-    public function isDeletedOrReleased()
+    public function isDeletedOrReleased(): bool
     {
         return $this->isDeleted() || $this->isReleased();
     }
 
-    /**
-     * Get the job identifier.
-     *
-     * @return string
-     */
-    abstract public function getJobId();
+    abstract public function getJobId(): mixed;
+
+    abstract public function attempts(): int;
+
+    abstract public function getRawBody(): string;
 
     /**
-     * Get the number of times the job has been attempted.
-     * @return int
+     * @return array{0: string, 1: string}
      */
-    abstract public function attempts();
-
-    /**
-     * Get the raw body string for the job.
-     * @return string
-     */
-    abstract public function getRawBody();
-
-    /**
-     * Parse the job declaration into class and method.
-     * @return array
-     */
-    protected function getParsedJob()
+    protected function getParsedJob(): array
     {
-        $job      = $this->payload('job');
+        $job = (string) $this->payload('job');
         $segments = explode('@', $job);
 
-        return count($segments) > 1 ? $segments : [$segments[0], 'fire'];
+        if (count($segments) > 1) {
+            return [(string) $segments[0], (string) $segments[1]];
+        }
+
+        return [(string) $segments[0], 'fire'];
     }
 
     /**
-     * Resolve the given job handler.
-     * @param string $name
-     * @return mixed
+     * Resolve the given job handler from the container.
      */
-    protected function resolve($name, $param)
+    protected function resolve(string $name, mixed $param): object
     {
-        $namespace = $this->app->getNamespace() . '\\job\\';
+        $namespace = rtrim($this->app->getNamespace(), '\\') . '\\job\\';
 
-        $class = false !== strpos($name, '\\') ? $name : $namespace . Str::studly($name);
+        $class = str_contains($name, '\\') ? $name : $namespace . Str::studly($name);
 
-        return $this->app->make($class, [$param], true);
+        $resolved = $this->app->make($class, [$param], true);
+
+        if (!is_object($resolved)) {
+            throw new \RuntimeException(sprintf('Unable to resolve job handler "%s".', $class));
+        }
+
+        return $resolved;
     }
 
-    public function getResolvedJob()
+    public function getResolvedJob(): object
     {
-        if (empty($this->instance)) {
+        if ($this->instance === null) {
             [$class] = $this->getParsedJob();
 
             $this->instance = $this->resolve($class, $this->payload('data'));
@@ -212,81 +158,45 @@ abstract class Job
         return $this->instance;
     }
 
-    /**
-     * Determine if the job has been marked as a failure.
-     *
-     * @return bool
-     */
-    public function hasFailed()
+    public function hasFailed(): bool
     {
         return $this->failed;
     }
 
-    /**
-     * Mark the job as "failed".
-     *
-     * @return void
-     */
-    public function markAsFailed()
+    public function markAsFailed(): void
     {
         $this->failed = true;
     }
 
-    /**
-     * Get the number of times to attempt a job.
-     *
-     * @return int|null
-     */
-    public function maxTries()
+    public function maxTries(): ?int
     {
-        return $this->payload('maxTries');
+        $value = $this->payload('maxTries');
+        return $value === null ? null : (int) $value;
     }
 
-    /**
-     * Get the number of seconds the job can run.
-     *
-     * @return int|null
-     */
-    public function timeout()
+    public function timeout(): ?int
     {
-        return $this->payload('timeout');
+        $value = $this->payload('timeout');
+        return $value === null ? null : (int) $value;
     }
 
-    /**
-     * Get the timestamp indicating when the job should timeout.
-     *
-     * @return int|null
-     */
-    public function timeoutAt()
+    public function timeoutAt(): ?int
     {
-        return $this->payload('timeoutAt');
+        $value = $this->payload('timeoutAt');
+        return $value === null ? null : (int) $value;
     }
 
-    /**
-     * Get the name of the queued job class.
-     *
-     * @return string
-     */
-    public function getName()
+    public function getName(): string
     {
-        return $this->payload('job');
+        return (string) $this->payload('job');
     }
 
-    /**
-     * Get the name of the connection the job belongs to.
-     *
-     * @return string
-     */
-    public function getConnection()
+    public function getConnection(): string
     {
         return $this->connection;
     }
 
-    /**
-     * Get the name of the queue the job belongs to.
-     * @return string
-     */
-    public function getQueue()
+    public function getQueue(): string
     {
         return $this->queue;
     }

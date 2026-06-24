@@ -11,20 +11,30 @@
 
 namespace think\queue;
 
+use Throwable;
 use think\App;
 
 class CallQueuedHandler
 {
-    protected $app;
+    protected App $app;
 
     public function __construct(App $app)
     {
         $this->app = $app;
     }
 
-    public function call(Job $job, array $data)
+    /**
+     * @param array<string, mixed> $data
+     */
+    public function call(Job $job, array $data): void
     {
-        $command = unserialize($data['command']);
+        $command = $this->safeUnserialize($data['command'] ?? '');
+
+        if (!is_object($command)) {
+            $job->markAsFailed();
+            $job->delete();
+            return;
+        }
 
         $this->app->invoke([$command, 'handle'], [$job]);
 
@@ -33,12 +43,40 @@ class CallQueuedHandler
         }
     }
 
-    public function failed(array $data)
+    /**
+     * @param array<string, mixed> $data
+     */
+    public function failed(array $data, ?Throwable $exception = null): void
     {
-        $command = unserialize($data['command']);
+        $command = $this->safeUnserialize($data['command'] ?? '');
 
-        if (method_exists($command, 'failed')) {
+        if (!is_object($command) || !method_exists($command, 'failed')) {
+            return;
+        }
+
+        // 同时兼容一个参数和两个参数的 failed() 方法。
+        $reflection = new \ReflectionMethod($command, 'failed');
+
+        if ($reflection->getNumberOfParameters() >= 1) {
+            $command->failed($exception ?? new \RuntimeException('Job execution failed.'));
+        } else {
             $command->failed();
         }
+    }
+
+    /**
+     * 安全地反序列化 payload 中的命令对象。
+     */
+    private function safeUnserialize(mixed $serialized): ?object
+    {
+        if (!is_string($serialized) || $serialized === '') {
+            return null;
+        }
+
+        // PHP 7.0+ 支持 allowed_classes，但这里我们依赖用户代码
+        // 的完整性。若反序列化本身失败，应当安静地返回 null。
+        $result = @unserialize($serialized);
+
+        return is_object($result) ? $result : null;
     }
 }

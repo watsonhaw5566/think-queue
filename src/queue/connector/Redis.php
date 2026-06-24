@@ -14,6 +14,7 @@ namespace think\queue\connector;
 use Closure;
 use Exception;
 use RedisException;
+use RuntimeException;
 use think\helper\Str;
 use think\queue\Connector;
 use think\queue\InteractsWithTime;
@@ -23,31 +24,41 @@ class Redis extends Connector
 {
     use InteractsWithTime;
 
-    /** @var  \Redis */
+    /** @var \Redis */
     protected $redis;
 
-    /**
-     * The name of the default queue.
-     *
-     * @var string
-     */
-    protected $default;
+    protected string $default;
+
+    protected ?int $retryAfter = 60;
+
+    protected ?int $blockFor = null;
 
     /**
-     * The expiration time of a job.
+     * Script SHA1 cache (lower-cased method name => sha1).
      *
-     * @var int|null
+     * @var array<string, string>
      */
-    protected $retryAfter = 60;
+    private array $scriptCache = [];
 
     /**
-     * The maximum number of seconds to block for a job.
-     *
-     * @var int|null
+     * Detect "connection went away" or other recoverable Redis errors.
      */
-    protected $blockFor = null;
+    private static function isRecoverableRedisError(RedisException $e): bool
+    {
+        $message = strtolower($e->getMessage());
 
-    public function __construct($redis, $default = 'default', $retryAfter = 60, $blockFor = null)
+        return Str::contains($message, [
+            'went away',
+            'connection lost',
+            'connection refused',
+            'connection reset',
+            'broken pipe',
+            'timeout',
+            'econnreset',
+        ]);
+    }
+
+    public function __construct($redis, string $default = 'default', int $retryAfter = 60, ?int $blockFor = null)
     {
         $this->redis      = $redis;
         $this->default    = $default;
@@ -55,251 +66,417 @@ class Redis extends Connector
         $this->blockFor   = $blockFor;
     }
 
-    public static function __make($config)
+    /**
+     * @param array<string, mixed> $config
+     * @throws Exception When the Redis extension is not available.
+     */
+    public static function __make(array $config): self
     {
         if (!extension_loaded('redis')) {
-            throw new Exception('redis扩展未安装');
+            throw new Exception('redis 扩展未安装');
         }
 
         $redis = new class($config) {
-            protected $config;
-            protected $client;
+            /** @var array<string, mixed> */
+            protected array $config;
 
-            public function __construct($config)
+            protected ?\Redis $client = null;
+
+            /**
+             * @param array<string, mixed> $config
+             */
+            public function __construct(array $config)
             {
                 $this->config = $config;
                 $this->client = $this->createClient();
             }
 
-            protected function createClient()
+            protected function createClient(): \Redis
             {
                 $config = $this->config;
-                $func   = $config['persistent'] ? 'pconnect' : 'connect';
+                $host   = (string) ($config['host'] ?? '127.0.0.1');
+                $port   = (int) ($config['port'] ?? 6379);
+                $timeout = (float) ($config['timeout'] ?? 5);
+                $persistent = (bool) ($config['persistent'] ?? false);
+                $password = $config['password'] ?? '';
+                $select   = (int) ($config['select'] ?? 0);
 
                 $client = new \Redis;
-                $client->$func($config['host'], $config['port'], $config['timeout']);
+                $connected = $persistent
+                    ? @$client->pconnect($host, $port, $timeout)
+                    : @$client->connect($host, $port, $timeout);
 
-                if ('' != $config['password']) {
-                    $client->auth($config['password']);
+                if (!$connected) {
+                    throw new RuntimeException(
+                        sprintf('Unable to connect to Redis server at %s:%d', $host, $port)
+                    );
                 }
 
-                if (0 != $config['select']) {
-                    $client->select($config['select']);
+                if ('' !== $password) {
+                    $client->auth($password);
                 }
+
+                if (0 !== $select) {
+                    $client->select($select);
+                }
+
                 return $client;
             }
 
-            public function __call($name, $arguments)
+            /**
+             * Magic method proxy — transparently reconnects on transient failures
+             * and retries the original command exactly once.
+             *
+             * @param array<int, mixed> $arguments
+             * @return mixed
+             */
+            public function __call(string $name, array $arguments): mixed
             {
                 try {
-                    return call_user_func_array([$this->client, $name], $arguments);
+                    return $this->client !== null
+                        ? call_user_func_array([$this->client, $name], $arguments)
+                        : call_user_func_array([$this->createClient(), $name], $arguments);
                 } catch (RedisException $e) {
-                    if (Str::contains($e->getMessage(), 'went away')) {
-                        $this->client = $this->createClient();
+                    if (!Redis::isRecoverableRedisError($e)) {
+                        throw $e;
                     }
 
-                    throw $e;
+                    // Reconnect and retry the same command exactly once.
+                    $this->client = $this->createClient();
+
+                    return call_user_func_array([$this->client, $name], $arguments);
                 }
             }
         };
 
-        return new self($redis, $config['queue'], $config['retry_after'] ?? 60, $config['block_for'] ?? null);
+        return new self(
+            $redis,
+            (string) ($config['queue'] ?? 'default'),
+            (int) ($config['retry_after'] ?? 60),
+            isset($config['block_for']) ? (int) $config['block_for'] : null
+        );
     }
 
-    public function size($queue = null)
+    public function size(?string $queue = null): int
     {
         $queue = $this->getQueue($queue);
 
-        return $this->redis->lLen($queue) + $this->redis->zCard("{$queue}:delayed") + $this->redis->zCard("{$queue}:reserved");
+        return $this->withRedisRetry(function () use ($queue): int {
+            return (int) $this->redis->lLen($queue)
+                + (int) $this->redis->zCard("{$queue}:delayed")
+                + (int) $this->redis->zCard("{$queue}:reserved");
+        });
     }
 
-    public function push($job, $data = '', $queue = null)
+    public function push(object|string $job, mixed $data = '', ?string $queue = null): mixed
     {
         return $this->pushRaw($this->createPayload($job, $data), $queue);
     }
 
-    public function pushRaw($payload, $queue = null, array $options = [])
+    public function pushRaw(string $payload, ?string $queue = null, array $options = []): mixed
     {
-        if ($this->redis->rPush($this->getQueue($queue), $payload)) {
-            return json_decode($payload, true)['id'] ?? null;
-        }
+        return $this->withRedisRetry(function () use ($queue, $payload): ?string {
+            if ($this->redis->rPush($this->getQueue($queue), $payload)) {
+                $decoded = json_decode($payload, true);
+                return is_array($decoded) ? ($decoded['id'] ?? null) : null;
+            }
+            return null;
+        });
     }
 
-    public function later($delay, $job, $data = '', $queue = null)
+    public function later(\DateTimeInterface|int $delay, object|string $job, mixed $data = '', ?string $queue = null): mixed
     {
         return $this->laterRaw($delay, $this->createPayload($job, $data), $queue);
     }
 
-    protected function laterRaw($delay, $payload, $queue = null)
+    /**
+     * @param \DateTimeInterface|int $delay
+     */
+    protected function laterRaw(\DateTimeInterface|int $delay, string $payload, ?string $queue = null): mixed
     {
-        if ($this->redis->zadd(
-            $this->getQueue($queue) . ':delayed',
-            $this->availableAt($delay),
-            $payload
-        )) {
-            return json_decode($payload, true)['id'] ?? null;
-        }
+        return $this->withRedisRetry(function () use ($queue, $delay, $payload): ?string {
+            if ($this->redis->zadd(
+                $this->getQueue($queue) . ':delayed',
+                $this->availableAt($delay),
+                $payload
+            )) {
+                $decoded = json_decode($payload, true);
+                return is_array($decoded) ? ($decoded['id'] ?? null) : null;
+            }
+            return null;
+        });
     }
 
-    public function pop($queue = null)
+    public function pop(?string $queue = null): ?RedisJob
     {
-        $this->migrate($prefixed = $this->getQueue($queue));
+        $prefixed = $this->getQueue($queue);
 
-        if (empty($nextJob = $this->retrieveNextJob($prefixed))) {
-            return;
+        $this->migrate($prefixed);
+
+        $nextJob = $this->retrieveNextJob($prefixed);
+
+        if (empty($nextJob[0]) || empty($nextJob[1])) {
+            return null;
         }
 
         [$job, $reserved] = $nextJob;
 
-        if ($reserved) {
-            return new RedisJob($this->app, $this, $job, $reserved, $this->connection, $queue);
-        }
+        return new RedisJob($this->app, $this, $job, $reserved, $this->connection, $queue);
     }
 
     /**
      * Migrate any delayed or expired jobs onto the primary queue.
-     *
-     * @param string $queue
-     * @return void
      */
-    protected function migrate($queue)
+    protected function migrate(string $queue): void
     {
         $this->migrateExpiredJobs($queue . ':delayed', $queue);
 
-        if (!is_null($this->retryAfter)) {
+        if (null !== $this->retryAfter) {
             $this->migrateExpiredJobs($queue . ':reserved', $queue);
         }
     }
 
     /**
-     * 移动延迟任务
+     * Move expired jobs from a delayed/reserved sorted set to the main list.
      *
-     * @param string $from
-     * @param string $to
-     * @param bool $attempt
+     * Uses WATCH + MULTI/EXEC with a retry loop to safely handle concurrent
+     * modifications by other workers.
      */
-    public function migrateExpiredJobs($from, $to, $attempt = true)
+    public function migrateExpiredJobs(string $from, string $to, bool $attempt = true): void
     {
-        $this->redis->watch($from);
+        $this->withRedisRetry(function () use ($from, $to): void {
+            $maxAttempts = 3;
 
-        $jobs = $this->redis->zRangeByScore($from, '-inf', $this->currentTime());
+            for ($attemptCount = 0; $attemptCount < $maxAttempts; $attemptCount++) {
+                $this->redis->watch($from);
 
-        if (!empty($jobs)) {
-            $this->transaction(function () use ($from, $to, $jobs, $attempt) {
+                $jobs = $this->redis->zRangeByScore($from, '-inf', (string) $this->currentTime());
 
-                $this->redis->zRemRangeByRank($from, 0, count($jobs) - 1);
-
-                for ($i = 0; $i < count($jobs); $i += 100) {
-
-                    $values = array_slice($jobs, $i, 100);
-
-                    $this->redis->rPush($to, ...$values);
+                if (empty($jobs)) {
+                    $this->redis->unwatch();
+                    return;
                 }
-            });
-        }
 
-        $this->redis->unwatch();
+                $jobCount = count($jobs);
+
+                $this->redis->multi();
+                try {
+                    $this->redis->zRemRangeByRank($from, 0, $jobCount - 1);
+
+                    // Push in chunks to avoid stack overflow / buffer limits.
+                    for ($i = 0; $i < $jobCount; $i += 100) {
+                        $chunk = array_slice($jobs, $i, 100);
+                        $this->redis->rPush($to, ...$chunk);
+                    }
+
+                    $result = $this->redis->exec();
+
+                    if (false === $result) {
+                        // Another client modified `$from`; back off and retry.
+                        usleep(100000 * ($attemptCount + 1));
+                        continue;
+                    }
+
+                    return;
+                } catch (RedisException $e) {
+                    try {
+                        $this->redis->discard();
+                    } catch (RedisException $discardException) {
+                        // discard() may throw if we're not in MULTI — ignore.
+                    }
+                    throw $e;
+                }
+            }
+        });
     }
 
     /**
-     * Retrieve the next job from the queue.
+     * Retrieve the next job from the queue using an atomic Lua script.
      *
-     * @param string $queue
-     * @return array
+     * @return array{0: string|null, 1: string|null}
      */
-    protected function retrieveNextJob($queue)
+    protected function retrieveNextJob(string $queue): array
     {
-        if (!is_null($this->blockFor)) {
+        if (null !== $this->blockFor) {
             return $this->blockingPop($queue);
         }
 
-        $job      = $this->redis->lpop($queue);
-        $reserved = false;
+        $script = <<<'LUA'
+            local queue = KEYS[1]
+            local reserved = KEYS[2]
+            local availableAt = ARGV[1]
 
-        if ($job) {
-            $reserved = json_decode($job, true);
-            $reserved['attempts']++;
-            $reserved = json_encode($reserved);
-            $this->redis->zAdd($queue . ':reserved', $this->availableAt($this->retryAfter), $reserved);
+            local job = redis.call('LPOP', queue)
+            if job == false then
+                return {false, false}
+            end
+
+            local decoded = cjson.decode(job)
+            decoded.attempts = (decoded.attempts or 0) + 1
+            local reservedPayload = cjson.encode(decoded)
+
+            redis.call('ZADD', reserved, availableAt, reservedPayload)
+            return {job, reservedPayload}
+        LUA;
+
+        return $this->withRedisRetry(function () use ($script, $queue): array {
+            $result = $this->evalLua($script, 'retrieveNextJob', [
+                $queue,
+                $queue . ':reserved',
+            ], [
+                (string) $this->availableAt($this->retryAfter ?? 60),
+            ]);
+
+            if (!is_array($result) || count($result) < 2) {
+                return [null, null];
+            }
+
+            $job = $result[0] === false ? null : (is_string($result[0]) ? $result[0] : null);
+            $reserved = $result[1] === false ? null : (is_string($result[1]) ? $result[1] : null);
+
+            return [$job, $reserved];
+        });
+    }
+
+    /**
+     * Retrieve the next job by blocking-pop. Uses a Lua script to keep
+     * the "pop → increment attempts → zadd reserved" operation atomic.
+     *
+     * @return array{0: string|null, 1: string|null}
+     */
+    protected function blockingPop(string $queue): array
+    {
+        // BLPOP cannot be called inside a script/MULTI, so we use it as the
+        // blocking step and then atomically push to reserved with a script.
+        $rawBody = $this->withRedisRetry(function () use ($queue): mixed {
+            return $this->redis->blpop($queue, (int) $this->blockFor);
+        });
+
+        if (empty($rawBody) || !is_array($rawBody) || !isset($rawBody[1]) || !is_string($rawBody[1])) {
+            return [null, null];
         }
 
-        return [$job, $reserved];
-    }
+        $script = <<<'LUA'
+            local reserved = KEYS[1]
+            local availableAt = ARGV[1]
+            local payload = ARGV[2]
 
-    /**
-     * Retrieve the next job by blocking-pop.
-     *
-     * @param string $queue
-     * @return array
-     */
-    protected function blockingPop($queue)
-    {
-        $rawBody = $this->redis->blpop($queue, $this->blockFor);
+            local decoded = cjson.decode(payload)
+            decoded.attempts = (decoded.attempts or 0) + 1
+            local reservedPayload = cjson.encode(decoded)
 
-        if (!empty($rawBody)) {
-            $payload = json_decode($rawBody[1], true);
+            redis.call('ZADD', reserved, availableAt, reservedPayload)
+            return reservedPayload
+        LUA;
 
-            $payload['attempts']++;
+        $reserved = $this->withRedisRetry(function () use ($script, $queue, $rawBody): mixed {
+            return $this->evalLua($script, 'blockingPop', [
+                $queue . ':reserved',
+            ], [
+                (string) $this->availableAt($this->retryAfter ?? 60),
+                $rawBody[1],
+            ]);
+        });
 
-            $reserved = json_encode($payload);
-
-            $this->redis->zadd($queue . ':reserved', $this->availableAt($this->retryAfter), $reserved);
-
-            return [$rawBody[1], $reserved];
+        if (!is_string($reserved)) {
+            return [null, null];
         }
 
-        return [null, null];
+        return [$rawBody[1], $reserved];
     }
 
-    /**
-     * 删除任务
-     *
-     * @param string $queue
-     * @param RedisJob $job
-     * @return void
-     */
-    public function deleteReserved($queue, $job)
+    public function deleteReserved(string $queue, RedisJob $job): void
     {
-        $this->redis->zRem($this->getQueue($queue) . ':reserved', $job->getReservedJob());
+        $this->withRedisRetry(function () use ($queue, $job): void {
+            $this->redis->zRem(
+                $this->getQueue($queue) . ':reserved',
+                $job->getReservedJob()
+            );
+        });
     }
 
-    /**
-     * Delete a reserved job from the reserved queue and release it.
-     *
-     * @param string $queue
-     * @param RedisJob $job
-     * @param int $delay
-     * @return void
-     */
-    public function deleteAndRelease($queue, $job, $delay)
+    public function deleteAndRelease(string $queue, RedisJob $job, int $delay): void
     {
-        $queue = $this->getQueue($queue);
-
+        $prefixed = $this->getQueue($queue);
         $reserved = $job->getReservedJob();
 
-        $this->redis->zRem($queue . ':reserved', $reserved);
+        $this->withRedisRetry(function () use ($prefixed, $reserved, $delay): void {
+            $this->redis->multi();
+            try {
+                $this->redis->zRem($prefixed . ':reserved', $reserved);
+                $this->redis->zAdd($prefixed . ':delayed', $this->availableAt($delay), $reserved);
 
-        $this->redis->zAdd($queue . ':delayed', $this->availableAt($delay), $reserved);
+                if (false === $this->redis->exec()) {
+                    $this->redis->discard();
+                }
+            } catch (RedisException $e) {
+                try {
+                    $this->redis->discard();
+                } catch (RedisException $discardException) {
+                    // ignore
+                }
+                throw $e;
+            }
+        });
     }
 
     /**
-     * redis事务
-     * @param Closure $closure
+     * Run a Lua script on the Redis client, falling back to SCRIPT LOAD
+     * + EVALSHA if the script is not yet in the server cache.
+     *
+     * @param array<int, string> $keys
+     * @param array<int, string> $argv
+     * @return mixed Whatever the Lua script returns.
      */
-    protected function transaction(Closure $closure)
+    protected function evalLua(string $script, string $cacheKey, array $keys, array $argv): mixed
     {
-        $this->redis->multi();
-        try {
-            call_user_func($closure);
-            if (!$this->redis->exec()) {
-                $this->redis->discard();
+        $numKeys = count($keys);
+        $args = array_merge($keys, $argv);
+
+        // Try EVALSHA first using a cached SHA1.
+        if (isset($this->scriptCache[$cacheKey])) {
+            try {
+                $result = $this->redis->evalSha(
+                    $this->scriptCache[$cacheKey],
+                    $args,
+                    $numKeys
+                );
+                if ($this->redis->getLastError() === null || !str_contains((string) $this->redis->getLastError(), 'NOSCRIPT')) {
+                    return $result;
+                }
+            } catch (RedisException $e) {
+                if (!str_contains(strtolower($e->getMessage()), 'noscript')) {
+                    throw $e;
+                }
             }
-        } catch (Exception $e) {
-            $this->redis->discard();
         }
+
+        // Fall back to EVAL, which also loads the script into the server cache.
+        $sha = sha1($script);
+        $this->scriptCache[$cacheKey] = $sha;
+
+        return $this->redis->eval($script, $args, $numKeys);
     }
 
-    protected function createPayloadArray($job, $data = '')
+    /**
+     * Wrap a Redis operation with automatic retry on transient failures.
+     *
+     * @template T
+     * @param callable(): T $operation
+     * @return T
+     */
+    protected function withRedisRetry(callable $operation): mixed
+    {
+        return $this->retry(
+            $operation,
+            static fn (\Throwable $e): bool => $e instanceof RedisException && self::isRecoverableRedisError($e),
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function createPayloadArray(object|string $job, mixed $data = ''): array
     {
         return array_merge(parent::createPayloadArray($job, $data), [
             'id'       => $this->getRandomId(),
@@ -307,25 +484,22 @@ class Redis extends Connector
         ]);
     }
 
-    /**
-     * 随机id
-     *
-     * @return string
-     */
-    protected function getRandomId()
+    protected function getRandomId(): string
     {
+        if (function_exists('random_bytes')) {
+            try {
+                return bin2hex(random_bytes(16));
+            } catch (\Exception $e) {
+                // Fall through to Str::random.
+            }
+        }
+
         return Str::random(32);
     }
 
-    /**
-     * 获取队列名
-     *
-     * @param string|null $queue
-     * @return string
-     */
-    protected function getQueue($queue)
+    protected function getQueue(?string $queue): string
     {
-        $queue = $queue ?: $this->default;
-        return "{queues:{$queue}}";
+        $name = $queue ?? $this->default;
+        return "{queues:{$name}}";
     }
 }
