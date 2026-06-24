@@ -16,6 +16,7 @@ use think\queue\Connector;
 use think\queue\event\JobFailed;
 use think\queue\event\JobProcessed;
 use think\queue\event\JobProcessing;
+use think\queue\Job;
 use think\queue\job\Sync as SyncJob;
 use Throwable;
 
@@ -51,12 +52,12 @@ class Sync extends Connector
         $this->app->event->trigger($event);
     }
 
-    public function pop(?string $queue = null): ?\think\queue\Job
+    public function pop(?string $queue = null): ?Job
     {
         return null;
     }
 
-    protected function resolveJob(string $payload, ?string $queue): \think\queue\Job
+    protected function resolveJob(string $payload, ?string $queue): Job
     {
         return new SyncJob($this->app, $payload, $this->connection, $queue);
     }

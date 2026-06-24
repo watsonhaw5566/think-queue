@@ -15,11 +15,24 @@ use DateInterval;
 use DateTimeInterface;
 use InvalidArgumentException;
 use think\App;
+use think\Config;
+use think\Event;
 
+/**
+ * Queue connector base class.
+ *
+ * @property-read App    $app
+ * @property-read Config $config
+ * @property-read Event  $event
+ */
 abstract class Connector
 {
-    /** @var App */
-    protected $app;
+    /**
+     * Application container (includes dynamically bound services like `config` and `event`).
+     *
+     * @var App&object{config: Config, event: Event}
+     */
+    protected App $app;
 
     /**
      * The connector name for the queue.

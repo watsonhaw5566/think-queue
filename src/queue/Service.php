@@ -2,6 +2,9 @@
 
 namespace think\queue;
 
+use think\App;
+use think\Config;
+use think\Event;
 use think\helper\Arr;
 use think\helper\Str;
 use think\Queue;
@@ -15,6 +18,11 @@ use think\queue\command\Retry;
 use think\queue\command\Table;
 use think\queue\command\Work;
 
+/**
+ * @property-read App    $app
+ * @property-read Config $config
+ * @property-read Event  $event
+ */
 class Service extends \think\Service
 {
     public function register(): void

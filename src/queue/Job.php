@@ -13,9 +13,18 @@ namespace think\queue;
 
 use Throwable;
 use think\App;
+use think\Config;
+use think\Event;
 use think\helper\Arr;
 use think\helper\Str;
 
+/**
+ * Base class for queue jobs.
+ *
+ * @property-read App    $app
+ * @property-read Config $config
+ * @property-read Event  $event
+ */
 abstract class Job
 {
     private ?object $instance = null;
@@ -23,6 +32,11 @@ abstract class Job
     /** @var array<string, mixed>|null */
     private ?array $payload = null;
 
+    /**
+     * Application container (includes dynamically bound services like `config` and `event`).
+     *
+     * @var App&object{config: Config, event: Event}
+     */
     protected App $app;
 
     protected string $queue = '';

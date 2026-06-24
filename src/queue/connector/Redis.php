@@ -43,7 +43,7 @@ class Redis extends Connector
     /**
      * Detect "connection went away" or other recoverable Redis errors.
      */
-    private static function isRecoverableRedisError(RedisException $e): bool
+    public static function isRecoverableRedisError(RedisException $e): bool
     {
         $message = strtolower($e->getMessage());
 

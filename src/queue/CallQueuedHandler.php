@@ -13,9 +13,23 @@ namespace think\queue;
 
 use Throwable;
 use think\App;
+use think\Config;
+use think\Event;
 
+/**
+ * Handles queued commands.
+ *
+ * @property-read App    $app
+ * @property-read Config $config
+ * @property-read Event  $event
+ */
 class CallQueuedHandler
 {
+    /**
+     * Application container (includes dynamically bound services like `config` and `event`).
+     *
+     * @var App&object{config: Config, event: Event}
+     */
     protected App $app;
 
     public function __construct(App $app)

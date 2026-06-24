@@ -21,9 +21,18 @@ use think\queue\connector\Redis;
  *
  * @mixin Database
  * @mixin Redis
+ *
+ * @property-read App    $app
+ * @property-read Config $config
+ * @property-read Event  $event
  */
 class Queue extends Manager
 {
+    /**
+     * Application container (includes dynamically bound services like `config` and `event`).
+     *
+     * @var App&object{config: Config, event: Event}
+     */
     protected $namespace = '\\think\\queue\\connector\\';
 
     protected function resolveType(string $name): string
