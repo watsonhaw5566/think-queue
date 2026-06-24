@@ -132,6 +132,14 @@ abstract class Connector
     }
 
     /**
+     * @return App
+     */
+    public function getApp()
+    {
+        return $this->app;
+    }
+
+    /**
      * Get the connector name for the queue.
      *
      * @return string

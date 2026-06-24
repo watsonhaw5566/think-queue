@@ -69,4 +69,42 @@ class QueueTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         $this->queue->connection('hello');
     }
+
+    public function testGetDefaultDriverReturnsConfigValue()
+    {
+        $config = m::mock(Config::class);
+        $config->shouldReceive('get')->with('queue.default')->andReturn('redis');
+        $this->app->shouldReceive('get')->with('config')->andReturn($config);
+
+        $this->queue = new Queue($this->app);
+
+        $this->assertSame('redis', $this->queue->getDefaultDriver());
+    }
+
+    public function testDriverCreationInvokesConnectorSetAppAndSetConnection()
+    {
+        $this->queue = new Queue($this->app);
+
+        $sync = new Sync();
+        $this->app->shouldReceive('invokeClass')->with('\think\queue\connector\Sync', m::any())->andReturn($sync);
+
+        $config = m::mock(Config::class);
+        $config->shouldReceive('get')->andReturnUsing(function ($key, $default = null) {
+            switch ($key) {
+                case 'queue.connections.custom.type':
+                    return 'sync';
+                case 'queue.connections.custom':
+                    return ['type' => 'sync'];
+                default:
+                    return $default;
+            }
+        });
+
+        $this->app->shouldReceive('get')->with('config')->andReturn($config);
+
+        $connector = $this->queue->connection('custom');
+
+        $this->assertSame($this->app, $connector->getApp());
+        $this->assertSame('custom', $connector->getConnection());
+    }
 }

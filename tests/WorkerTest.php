@@ -125,6 +125,13 @@ class WorkerTest extends TestCase
         $this->assertEquals(5, $worker->sleptFor);
     }
 
+    public function testMemoryIsProperlyEvaluatedAgainstLimit()
+    {
+        $worker = new Worker($this->queue, $this->event, $this->handle, $this->cache);
+
+        $this->assertIsBool($worker->memoryExceeded(8));
+    }
+
     public function testJobIsReleasedOnException()
     {
         $e = new RuntimeException;
