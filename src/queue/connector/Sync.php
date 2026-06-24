@@ -51,20 +51,21 @@ class Sync extends Connector
         $this->app->event->trigger($event);
     }
 
-    public function pop(?string $queue = null): ?SyncJob
+    public function pop(?string $queue = null): ?\think\queue\Job
     {
         return null;
     }
 
-    protected function resolveJob(string $payload, ?string $queue): SyncJob
+    protected function resolveJob(string $payload, ?string $queue): \think\queue\Job
     {
         return new SyncJob($this->app, $payload, $this->connection, $queue);
     }
 
-    public function pushRaw(string $payload, ?string $queue = null, array $options = []): void
+    public function pushRaw(string $payload, ?string $queue = null, array $options = []): mixed
     {
         // Sync connector has no queue; this method is required by the contract
         // but pushing raw payloads in a synchronous context is a no-op.
+        return null;
     }
 
     public function later(\DateTimeInterface|int $delay, object|string $job, mixed $data = '', ?string $queue = null): int

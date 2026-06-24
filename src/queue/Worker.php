@@ -164,14 +164,14 @@ class Worker
         pcntl_alarm(max($this->timeoutForJob($job, $timeout), 0));
     }
 
-    public function stop(int $status = 0): never
+    public function stop(int $status = 0): void
     {
         $this->event->trigger(new WorkerStopping($status));
 
         exit($status);
     }
 
-    public function kill(int $status = 0): never
+    public function kill(int $status = 0): void
     {
         $this->event->trigger(new WorkerStopping($status));
 
@@ -328,13 +328,13 @@ class Worker
             return;
         }
 
-        $this->failJob(
-            $connection,
-            $job,
-            new MaxAttemptsExceededException(
-                $job->getName() . ' has been attempted too many times or run too long. The job may have previously timed out.'
-            )
+        $maxAttemptsExceededException = new MaxAttemptsExceededException(
+            $job->getName() . ' has been attempted too many times or run too long. The job may have previously timed out.'
         );
+
+        $this->failJob($connection, $job, $maxAttemptsExceededException);
+
+        throw $maxAttemptsExceededException;
     }
 
     protected function markJobAsFailedIfWillExceedMaxAttempts(string $connection, Job $job, int $maxTries, Throwable $e): void
@@ -369,10 +369,18 @@ class Worker
 
         try {
             $job->delete();
-            $job->failed($e);
-        } finally {
-            $this->event->trigger(new JobFailed($connection, $job, $e));
+        } catch (Throwable $deleteError) {
+            // 删除失败，但仍需要触发事件。
         }
+
+        try {
+            // job 自定义失败回调可以 throw，但这不应该影响整体失败标记与事件触发。
+            $job->failed($e);
+        } catch (Throwable $ignored) {
+            // 忽略 job 自身的 failed() 错误 — 原始异常 $e 才是需要报告的。
+        }
+
+        $this->event->trigger(new JobFailed($connection, $job, $e));
     }
 
     public function sleep(int $seconds): void

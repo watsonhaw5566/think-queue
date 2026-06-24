@@ -24,7 +24,7 @@ use think\queue\connector\Redis;
  */
 class Queue extends Manager
 {
-    protected string $namespace = '\\think\\queue\\connector\\';
+    protected $namespace = '\\think\\queue\\connector\\';
 
     protected function resolveType(string $name): string
     {
@@ -57,6 +57,6 @@ class Queue extends Manager
 
     public function getDefaultDriver(): string
     {
-        return (string) $this->app->config->get('queue.default', 'sync');
+        return (string) $this->app->config->get('queue.default');
     }
 }

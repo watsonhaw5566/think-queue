@@ -70,7 +70,7 @@ class Listener
     }
 
     public function makeProcess(
-        string $connection,
+        ?string $connection,
         string $queue,
         int $delay,
         int $sleep,
@@ -96,7 +96,7 @@ class Listener
 
     public function runProcess(Process $process, int $memory): void
     {
-        $process->run(function (int $type, string $line): void {
+        $process->run(function ($type, string $line): void {
             $this->handleWorkerOutput($type, $line);
         });
 
@@ -105,7 +105,7 @@ class Listener
         }
     }
 
-    protected function handleWorkerOutput(int $type, string $line): void
+    protected function handleWorkerOutput($type, string $line): void
     {
         if ($this->outputHandler !== null) {
             ($this->outputHandler)($type, $line);
@@ -117,7 +117,7 @@ class Listener
         return (memory_get_usage(true) / 1024 / 1024) >= $memoryLimit;
     }
 
-    public function stop(): never
+    public function stop(): void
     {
         exit(0);
     }
