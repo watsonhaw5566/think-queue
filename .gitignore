@@ -1,4 +1,4 @@
-/vendor/
-/.idea/
-/composer.lock
-/thinkphp/
+.idea
+.vscode
+vendor
+.phpunit.cache
