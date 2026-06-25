@@ -4,7 +4,7 @@
 // +----------------------------------------------------------------------
 // | Copyright (c) 2006-2015 http://thinkphp.cn All rights reserved.
 // +----------------------------------------------------------------------
-// | Licensed ( http://www.apache.org/licenses/LICENSE-2.0 )
+// | Licensed under http://www.apache.org/licenses/LICENSE-2.0 )
 // +----------------------------------------------------------------------
 // | Author: yunwuxin <448901948@qq.com>
 // +----------------------------------------------------------------------
@@ -20,19 +20,18 @@ use think\queue\Listener;
 
 class Listen extends Command
 {
-    /** @var  Listener */
-    protected $listener;
+    protected Listener $listener;
 
     public function __construct(Listener $listener)
     {
         parent::__construct();
         $this->listener = $listener;
-        $this->listener->setOutputHandler(function ($type, $line) {
+        $this->listener->setOutputHandler(function (string $type, string $line): void {
             $this->output->write($line);
         });
     }
 
-    protected function configure()
+    protected function configure(): void
     {
         $this->setName('queue:listen')
             ->addArgument('connection', Argument::OPTIONAL, 'The name of the queue connection to work', null)
@@ -45,16 +44,16 @@ class Listen extends Command
             ->setDescription('Listen to a given queue');
     }
 
-    public function execute(Input $input, Output $output)
+    public function execute(Input $input, Output $output): void
     {
-        $connection = $input->getArgument('connection') ?: $this->app->config->get('queue.default');
+        $connection = (string) ($input->getArgument('connection') ?: $this->app->config->get('queue.default'));
 
-        $queue   = $input->getOption('queue') ?: $this->app->config->get("queue.connections.{$connection}.queue", 'default');
-        $delay   = $input->getOption('delay');
-        $memory  = $input->getOption('memory');
-        $timeout = $input->getOption('timeout');
-        $sleep   = $input->getOption('sleep');
-        $tries   = $input->getOption('tries');
+        $queue   = (string) ($input->getOption('queue') ?: $this->app->config->get("queue.connections.{$connection}.queue", 'default'));
+        $delay   = (int) $input->getOption('delay');
+        $memory  = (int) $input->getOption('memory');
+        $timeout = (int) $input->getOption('timeout');
+        $sleep   = (int) $input->getOption('sleep');
+        $tries   = (int) $input->getOption('tries');
 
         $this->listener->listen($connection, $queue, $delay, $sleep, $tries, $memory, $timeout);
     }

@@ -3,22 +3,17 @@
 namespace think\queue\event;
 
 use think\queue\Job;
+use Throwable;
 
+/**
+ * 任务执行失败时触发。
+ */
 class JobFailed
 {
-    /** @var string */
-    public $connection;
-
-    /** @var Job */
-    public $job;
-
-    /** @var \Exception */
-    public $exception;
-
-    public function __construct($connection, $job, $exception)
-    {
-        $this->connection = $connection;
-        $this->job        = $job;
-        $this->exception  = $exception;
+    public function __construct(
+        public readonly string $connection,
+        public readonly Job $job,
+        public readonly Throwable $exception,
+    ) {
     }
 }

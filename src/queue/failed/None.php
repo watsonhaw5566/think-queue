@@ -4,60 +4,45 @@ namespace think\queue\failed;
 
 use think\queue\FailedJob;
 
+/**
+ * 「不存储」失败任务的空实现。
+ *
+ * 当 `config/queue.php` 中 `failed.type` 设为 `'none'` 时使用此实现。
+ * 所有写操作都会被忽略，读操作返回空结果。
+ */
 class None extends FailedJob
 {
-
-    /**
-     * Log a failed job into storage.
-     *
-     * @param string     $connection
-     * @param string     $queue
-     * @param string     $payload
-     * @param \Exception $exception
-     */
-    public function log($connection, $queue, $payload, $exception)
+    public function log(string $connection, string $queue, string $payload, \Throwable $exception): mixed
     {
-
+        return null;
     }
 
     /**
-     * Get a list of all of the failed jobs.
-     *
-     * @return array
+     * @return array<int, object|array<string, mixed>>
      */
-    public function all()
+    public function all(): array
     {
         return [];
     }
 
     /**
-     * Get a single failed job.
-     *
      * @param mixed $id
+     * @return object|array<string, mixed>|null
      */
-    public function find($id)
+    public function find(mixed $id): mixed
     {
-
+        return null;
     }
 
     /**
-     * Delete a single failed job from storage.
-     *
      * @param mixed $id
-     * @return bool
      */
-    public function forget($id)
+    public function forget(mixed $id): bool
     {
         return true;
     }
 
-    /**
-     * Flush all of the failed jobs from storage.
-     *
-     * @return void
-     */
-    public function flush()
+    public function flush(): void
     {
-
     }
 }

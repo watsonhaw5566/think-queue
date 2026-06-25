@@ -9,14 +9,14 @@ use think\helper\Arr;
 
 class Retry extends Command
 {
-    protected function configure()
+    protected function configure(): void
     {
         $this->setName('queue:retry')
             ->addArgument('id', Argument::IS_ARRAY | Argument::REQUIRED, 'The ID of the failed job or "all" to retry all jobs')
             ->setDescription('Retry a failed queue job');
     }
 
-    public function handle()
+    public function handle(): void
     {
         foreach ($this->getJobIds() as $id) {
             $job = $this->app['queue.failer']->find($id);
@@ -36,14 +36,17 @@ class Retry extends Command
     /**
      * Retry the queue job.
      *
-     * @param stdClass $job
-     * @return void
+     * @param stdClass|array<string, mixed> $job
      */
-    protected function retryJob($job)
+    protected function retryJob(object|array $job): void
     {
-        $this->app['queue']->connection($job['connection'])->pushRaw(
-            $this->resetAttempts($job['payload']),
-            $job['queue']
+        $connection = is_array($job) ? $job['connection'] : $job->connection;
+        $payload    = is_array($job) ? $job['payload'] : $job->payload;
+        $queue      = is_array($job) ? $job['queue'] : $job->queue;
+
+        $this->app['queue']->connection($connection)->pushRaw(
+            $this->resetAttempts($payload),
+            $queue
         );
     }
 
@@ -51,27 +54,25 @@ class Retry extends Command
      * Reset the payload attempts.
      *
      * Applicable to Redis jobs which store attempts in their payload.
-     *
-     * @param string $payload
-     * @return string
      */
-    protected function resetAttempts($payload)
+    protected function resetAttempts(string $payload): string
     {
-        $payload = json_decode($payload, true);
+        $decoded = json_decode($payload, true);
 
-        if (isset($payload['attempts'])) {
-            $payload['attempts'] = 0;
+        if (is_array($decoded) && isset($decoded['attempts'])) {
+            $decoded['attempts'] = 0;
+            return json_encode($decoded);
         }
 
-        return json_encode($payload);
+        return $payload;
     }
 
     /**
      * Get the job IDs to be retried.
      *
-     * @return array
+     * @return array<int, mixed>
      */
-    protected function getJobIds()
+    protected function getJobIds(): array
     {
         $ids = (array) $this->input->getArgument('id');
 

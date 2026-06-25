@@ -8,20 +8,20 @@ use think\migration\Creator;
 
 class Table extends Command
 {
-    protected function configure()
+    protected function configure(): void
     {
         $this->setName('queue:table')
             ->setDescription('Create a migration for the queue jobs database table');
     }
 
-    public function handle()
+    public function handle(): void
     {
         if (!$this->app->has('migration.creator')) {
             $this->output->error('Install think-migration first please');
             return;
         }
 
-        $table = $this->app->config->get('queue.connections.database.table');
+        $table = (string) $this->app->config->get('queue.connections.database.table');
 
         $className = Str::studly("create_{$table}_table");
 
@@ -31,7 +31,7 @@ class Table extends Command
         $path = $creator->create($className);
 
         // Load the alternative template if it is defined.
-        $contents = file_get_contents(__DIR__ . '/stubs/jobs.stub');
+        $contents = (string) file_get_contents(__DIR__ . '/stubs/jobs.stub');
 
         // inject the class names appropriate to this migration
         $contents = strtr($contents, [

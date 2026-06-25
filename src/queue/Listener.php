@@ -70,7 +70,7 @@ class Listener
     }
 
     public function makeProcess(
-        ?string $connection,
+        string $connection,
         string $queue,
         int $delay,
         int $sleep,
@@ -105,7 +105,10 @@ class Listener
         }
     }
 
-    protected function handleWorkerOutput($type, string $line): void
+    /**
+     * @param string $type Process::ERR 或 Process::OUT（由 Symfony Process 提供）
+     */
+    protected function handleWorkerOutput(string $type, string $line): void
     {
         if ($this->outputHandler !== null) {
             ($this->outputHandler)($type, $line);

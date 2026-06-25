@@ -11,17 +11,17 @@ class ListFailed extends Command
     /**
      * The table headers for the command.
      *
-     * @var array
+     * @var array<int, string>
      */
-    protected $headers = ['ID', 'Connection', 'Queue', 'Class', 'Fail Time'];
+    protected array $headers = ['ID', 'Connection', 'Queue', 'Class', 'Fail Time'];
 
-    protected function configure()
+    protected function configure(): void
     {
         $this->setName('queue:failed')
             ->setDescription('List all of the failed queue jobs');
     }
 
-    public function handle()
+    public function handle(): void
     {
         if (count($jobs = $this->getFailedJobs()) === 0) {
             $this->output->info('No failed jobs!');
@@ -33,10 +33,9 @@ class ListFailed extends Command
     /**
      * Display the failed jobs in the console.
      *
-     * @param array $jobs
-     * @return void
+     * @param array<int, array<int, mixed>> $jobs
      */
-    protected function displayFailedJobs(array $jobs)
+    protected function displayFailedJobs(array $jobs): void
     {
         $table = new Table();
         $table->setHeader($this->headers);
@@ -48,13 +47,13 @@ class ListFailed extends Command
     /**
      * Compile the failed jobs into a displayable format.
      *
-     * @return array
+     * @return array<int, array<int, mixed>>
      */
-    protected function getFailedJobs()
+    protected function getFailedJobs(): array
     {
         $failed = $this->app['queue.failer']->all();
 
-        return collect($failed)->map(function ($failed) {
+        return collect($failed)->map(function (mixed $failed): array {
             return $this->parseFailedJob((array) $failed);
         })->filter()->all();
     }
@@ -62,44 +61,42 @@ class ListFailed extends Command
     /**
      * Parse the failed job row.
      *
-     * @param array $failed
-     * @return array
+     * @param array<string, mixed> $failed
+     * @return array<int, mixed>
      */
-    protected function parseFailedJob(array $failed)
+    protected function parseFailedJob(array $failed): array
     {
         $row = array_values(Arr::except($failed, ['payload', 'exception']));
 
-        array_splice($row, 3, 0, $this->extractJobName($failed['payload']));
+        array_splice($row, 3, 0, $this->extractJobName((string) $failed['payload']));
 
         return $row;
     }
 
     /**
      * Extract the failed job name from payload.
-     *
-     * @param string $payload
-     * @return string|null
      */
-    private function extractJobName($payload)
+    private function extractJobName(string $payload): ?string
     {
-        $payload = json_decode($payload, true);
+        $decoded = json_decode($payload, true);
 
-        if ($payload && (!isset($payload['data']['command']))) {
-            return $payload['job'] ?? null;
-        } elseif ($payload && isset($payload['data']['command'])) {
-            return $this->matchJobName($payload);
+        if ($decoded && (!isset($decoded['data']['command']))) {
+            return $decoded['job'] ?? null;
+        } elseif ($decoded && isset($decoded['data']['command'])) {
+            return $this->matchJobName($decoded);
         }
+
+        return null;
     }
 
     /**
      * Match the job name from the payload.
      *
-     * @param array $payload
-     * @return string
+     * @param array<string, mixed> $payload
      */
-    protected function matchJobName($payload)
+    protected function matchJobName(array $payload): ?string
     {
-        preg_match('/"([^"]+)"/', $payload['data']['command'], $matches);
+        preg_match('/"([^"]+)"/', (string) $payload['data']['command'], $matches);
 
         if (isset($matches[1])) {
             return $matches[1];

@@ -24,8 +24,12 @@ class Redis extends Connector
 {
     use InteractsWithTime;
 
-    /** @var \Redis */
-    protected $redis;
+    /**
+     * Redis 客户端实例（原生 \Redis 对象或带重连逻辑的匿名类）。
+     *
+     * @var \Redis|object
+     */
+    protected object $redis;
 
     protected string $default;
 

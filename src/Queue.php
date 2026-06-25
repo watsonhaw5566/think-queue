@@ -28,12 +28,7 @@ use think\queue\connector\Redis;
  */
 class Queue extends Manager
 {
-    /**
-     * Application container (includes dynamically bound services like `config` and `event`).
-     *
-     * @var App&object{config: Config, event: Event}
-     */
-    protected $namespace = '\\think\\queue\\connector\\';
+    protected string $namespace = '\\think\\queue\\connector\\';
 
     protected function resolveType(string $name): string
     {

@@ -2,44 +2,18 @@
 
 namespace think\queue\event;
 
-use Exception;
 use think\queue\Job;
+use Throwable;
 
+/**
+ * 任务抛出异常（但尚未判定失败）时触发。
+ */
 class JobExceptionOccurred
 {
-    /**
-     * The connection name.
-     *
-     * @var string
-     */
-    public $connectionName;
-
-    /**
-     * The job instance.
-     *
-     * @var Job
-     */
-    public $job;
-
-    /**
-     * The exception instance.
-     *
-     * @var Exception
-     */
-    public $exception;
-
-    /**
-     * Create a new event instance.
-     *
-     * @param string    $connectionName
-     * @param Job       $job
-     * @param Exception $exception
-     * @return void
-     */
-    public function __construct($connectionName, $job, $exception)
-    {
-        $this->job            = $job;
-        $this->exception      = $exception;
-        $this->connectionName = $connectionName;
+    public function __construct(
+        public readonly string $connectionName,
+        public readonly Job $job,
+        public readonly Throwable $exception,
+    ) {
     }
 }
