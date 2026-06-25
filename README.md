@@ -12,7 +12,7 @@
 ## 安装
 
 ```bash
-composer require topthink/think-queue
+composer require watsonhaw/think-queue
 ```
 
 安装完成后会自动在 `config/queue.php` 生成配置文件。
