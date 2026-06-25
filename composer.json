@@ -28,8 +28,8 @@
   "require": {
     "php": ">=8.0",
     "ext-json": "*",
-    "symfony/process": ">=4.2",
-    "nesbot/carbon": ">=2.16",
+    "symfony/process": "^4.2|^5.0|^6.0|^7.0",
+    "nesbot/carbon": "^2.16|^3.0",
     "ext-redis": "*"
   },
   "require-dev": {
