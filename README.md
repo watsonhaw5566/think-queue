@@ -2,7 +2,7 @@
 
 ## 安装
 
-> composer require topthink/think-queue
+> composer require watsonhaw/think-queue
 
 ## 配置
 
