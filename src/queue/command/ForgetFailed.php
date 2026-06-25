@@ -7,14 +7,14 @@ use think\console\input\Argument;
 
 class ForgetFailed extends Command
 {
-    protected function configure()
+    protected function configure(): void
     {
         $this->setName('queue:forget')
             ->addArgument('id', Argument::REQUIRED, 'The ID of the failed job')
             ->setDescription('Delete a failed queue job');
     }
 
-    public function handle()
+    public function handle(): void
     {
         if ($this->app['queue.failer']->forget($this->input->getArgument('id'))) {
             $this->output->info('Failed job deleted successfully!');

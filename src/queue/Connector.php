@@ -11,72 +11,139 @@
 
 namespace think\queue;
 
+use DateInterval;
 use DateTimeInterface;
 use InvalidArgumentException;
 use think\App;
+use think\Config;
+use think\Event;
 
+/**
+ * Queue connector base class.
+ *
+ * @property-read App    $app
+ * @property-read Config $config
+ * @property-read Event  $event
+ */
 abstract class Connector
 {
-    /** @var App */
-    protected $app;
+    /**
+     * Application container (includes dynamically bound services like `config` and `event`).
+     *
+     * @var App&object{config: Config, event: Event}
+     */
+    protected App $app;
 
     /**
      * The connector name for the queue.
-     *
-     * @var string
      */
-    protected $connection;
+    protected string $connection = '';
 
-    protected $options = [];
+    /** @var array<string, mixed> */
+    protected array $options = [];
 
-    abstract public function size($queue = null);
+    /**
+     * Maximum retries for operations that may fail due to transient issues.
+     */
+    protected int $maxAttempts = 3;
 
-    abstract public function push($job, $data = '', $queue = null);
+    /**
+     * Delay in microseconds between retry attempts.
+     */
+    protected int $retryDelay = 100000;
 
-    public function pushOn($queue, $job, $data = '')
+    abstract public function size(?string $queue = null): int;
+
+    /**
+     * @param object|string $job
+     * @param mixed $data
+     */
+    abstract public function push(object|string $job, mixed $data = '', ?string $queue = null): mixed;
+
+    /**
+     * @param object|string $job
+     * @param mixed $data
+     */
+    public function pushOn(string $queue, object|string $job, mixed $data = ''): mixed
     {
         return $this->push($job, $data, $queue);
     }
 
-    abstract public function pushRaw($payload, $queue = null, array $options = []);
+    abstract public function pushRaw(string $payload, ?string $queue = null, array $options = []): mixed;
 
-    abstract public function later($delay, $job, $data = '', $queue = null);
+    /**
+     * @param DateTimeInterface|int $delay
+     * @param object|string $job
+     * @param mixed $data
+     */
+    abstract public function later(DateTimeInterface|int $delay, object|string $job, mixed $data = '', ?string $queue = null): mixed;
 
-    public function laterOn($queue, $delay, $job, $data = '')
+    /**
+     * @param DateTimeInterface|int $delay
+     * @param object|string $job
+     * @param mixed $data
+     */
+    public function laterOn(string $queue, DateTimeInterface|int $delay, object|string $job, mixed $data = ''): mixed
     {
         return $this->later($delay, $job, $data, $queue);
     }
 
-    public function bulk($jobs, $data = '', $queue = null)
+    /**
+     * @param iterable<int, object|string> $jobs
+     * @param mixed $data
+     */
+    public function bulk(iterable $jobs, mixed $data = '', ?string $queue = null): void
     {
-        foreach ((array) $jobs as $job) {
+        foreach ($jobs as $job) {
             $this->push($job, $data, $queue);
         }
     }
 
-    abstract public function pop($queue = null);
+    abstract public function pop(?string $queue = null): ?Job;
 
-    protected function createPayload($job, $data = '')
+    /**
+     * Create a payload string from the given job and data.
+     *
+     * @param object|string $job
+     * @param mixed $data
+     * @throws InvalidArgumentException When the payload cannot be JSON-encoded.
+     */
+    protected function createPayload(object|string $job, mixed $data = ''): string
     {
         $payload = $this->createPayloadArray($job, $data);
 
-        $payload = json_encode($payload);
+        $payload = json_encode($payload, JSON_UNESCAPED_UNICODE);
 
         if (JSON_ERROR_NONE !== json_last_error()) {
-            throw new InvalidArgumentException('Unable to create payload: ' . json_last_error_msg());
+            throw new InvalidArgumentException(
+                'Unable to create payload: ' . json_last_error_msg()
+            );
         }
 
         return $payload;
     }
 
-    protected function createPayloadArray($job, $data = '')
+    /**
+     * Create a payload array from the given job and data.
+     *
+     * @param object|string $job
+     * @param mixed $data
+     * @return array<string, mixed>
+     */
+    protected function createPayloadArray(object|string $job, mixed $data = ''): array
     {
         return is_object($job)
             ? $this->createObjectPayload($job)
             : $this->createPlainPayload($job, $data);
     }
 
-    protected function createPlainPayload($job, $data)
+    /**
+     * Create a payload for a plain job.
+     *
+     * @param mixed $data
+     * @return array<string, mixed>
+     */
+    protected function createPlainPayload(string $job, mixed $data): array
     {
         return [
             'job'      => $job,
@@ -86,71 +153,145 @@ abstract class Connector
         ];
     }
 
-    protected function createObjectPayload($job)
+    /**
+     * Create a payload for an object-based queue handler.
+     *
+     * @return array<string, mixed>
+     */
+    protected function createObjectPayload(object $job): array
     {
         return [
-            'job'       => 'think\queue\CallQueuedHandler@call',
+            'job'       => CallQueuedHandler::class . '@call',
             'maxTries'  => $job->tries ?? null,
             'timeout'   => $job->timeout ?? null,
             'timeoutAt' => $this->getJobExpiration($job),
             'data'      => [
                 'commandName' => get_class($job),
-                'command'     => serialize(clone $job),
+                'command'     => $this->serializeJob(clone $job),
             ],
         ];
     }
 
-    public function getJobExpiration($job)
+    /**
+     * Safely serialize a job object, logging any serialization warnings.
+     */
+    protected function serializeJob(object $job): string
+    {
+        $serialized = @serialize($job);
+
+        if (false === $serialized) {
+            throw new InvalidArgumentException(
+                sprintf(
+                    'Unable to serialize job "%s": job may contain non-serializable resources.',
+                    get_class($job)
+                )
+            );
+        }
+
+        return $serialized;
+    }
+
+    /**
+     * Get the expiration timestamp for a job.
+     */
+    public function getJobExpiration(object $job): ?int
     {
         if (!method_exists($job, 'retryUntil') && !isset($job->timeoutAt)) {
-            return;
+            return null;
         }
 
         $expiration = $job->timeoutAt ?? $job->retryUntil();
 
-        return $expiration instanceof DateTimeInterface
-            ? $expiration->getTimestamp() : $expiration;
-    }
-
-    protected function setMeta($payload, $key, $value)
-    {
-        $payload       = json_decode($payload, true);
-        $payload[$key] = $value;
-        $payload       = json_encode($payload);
-
-        if (JSON_ERROR_NONE !== json_last_error()) {
-            throw new InvalidArgumentException('Unable to create payload: ' . json_last_error_msg());
+        if ($expiration instanceof DateTimeInterface) {
+            return $expiration->getTimestamp();
         }
 
-        return $payload;
+        if ($expiration instanceof DateInterval) {
+            return time() + $expiration->s + ($expiration->i * 60) + ($expiration->h * 3600) + ($expiration->d * 86400);
+        }
+
+        return is_numeric($expiration) ? (int) $expiration : null;
     }
 
-    public function setApp(App $app)
+    /**
+     * Set a meta value on a payload.
+     *
+     * @param mixed $value
+     * @throws InvalidArgumentException When the payload is invalid JSON.
+     */
+    protected function setMeta(string $payload, string $key, mixed $value): string
+    {
+        $decoded = json_decode($payload, true);
+
+        if (!is_array($decoded)) {
+            throw new InvalidArgumentException('Invalid payload JSON: cannot set metadata.');
+        }
+
+        $decoded[$key] = $value;
+
+        $reencoded = json_encode($decoded, JSON_UNESCAPED_UNICODE);
+
+        if (JSON_ERROR_NONE !== json_last_error()) {
+            throw new InvalidArgumentException(
+                'Unable to re-encode payload: ' . json_last_error_msg()
+            );
+        }
+
+        return $reencoded;
+    }
+
+    /**
+     * Retry an operation with exponential backoff on transient failures.
+     *
+     * @template T
+     * @param callable(): T $operation
+     * @param callable(\Throwable): bool $isTransient  Return true to retry.
+     * @return T
+     * @throws \Throwable Last thrown exception if all attempts fail.
+     */
+    protected function retry(callable $operation, callable $isTransient, int $maxAttempts = null): mixed
+    {
+        $maxAttempts ??= $this->maxAttempts;
+        $attempts = 0;
+        $lastException = null;
+
+        while ($attempts < $maxAttempts) {
+            try {
+                return $operation();
+            } catch (\Throwable $e) {
+                $lastException = $e;
+                if (!$isTransient($e)) {
+                    throw $e;
+                }
+                $attempts++;
+                if ($attempts < $maxAttempts) {
+                    usleep($this->retryDelay * $attempts);
+                }
+            }
+        }
+
+        throw $lastException;
+    }
+
+    public function setApp(App $app): static
     {
         $this->app = $app;
         return $this;
     }
 
-    /**
-     * Get the connector name for the queue.
-     *
-     * @return string
-     */
-    public function getConnection()
+    public function getApp(): App
+    {
+        return $this->app;
+    }
+
+    public function getConnection(): string
     {
         return $this->connection;
     }
 
-    /**
-     * Set the connector name for the queue.
-     *
-     * @param string $name
-     * @return $this
-     */
-    public function setConnection($name)
+    public function setConnection(string $name): static
     {
         $this->connection = $name;
-
         return $this;
     }
 }

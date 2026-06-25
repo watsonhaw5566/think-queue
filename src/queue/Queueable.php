@@ -4,31 +4,49 @@
 // +----------------------------------------------------------------------
 // | Copyright (c) 2006-2016 http://thinkphp.cn All rights reserved.
 // +----------------------------------------------------------------------
-// | Licensed ( http://www.apache.org/licenses/LICENSE-2.0 )
+// | Licensed under http://www.apache.org/licenses/LICENSE-2.0 )
 // +----------------------------------------------------------------------
 // | Author: yunwuxin <448901948@qq.com>
 // +----------------------------------------------------------------------
 
 namespace think\queue;
 
+use DateTimeInterface;
+
+/**
+ * 为任务类提供链式配置能力。
+ *
+ * 典型用法：
+ * ```php
+ * $job = (new SendEmail)->onConnection('redis')->onQueue('high')->delay(60);
+ * \think\facade\Queue::push($job);
+ * ```
+ */
 trait Queueable
 {
-
-    /** @var string 连接 */
-    public $connection;
-
-    /** @var string 队列名称 */
-    public $queue;
-
-    /** @var integer 延迟时间 */
-    public $delay;
+    /**
+     * 任务使用的连接名（null 表示使用默认连接）。
+     */
+    public ?string $connection = null;
 
     /**
-     * 设置连接名
-     * @param $connection
+     * 任务使用的队列名（null 表示使用默认队列）。
+     */
+    public ?string $queue = null;
+
+    /**
+     * 任务延迟时间（null 表示不延迟；数字为秒数；也可传入 DateTimeInterface 表示绝对时间）。
+     *
+     * @var \DateTimeInterface|int|null
+     */
+    public $delay = null;
+
+    /**
+     * 设置任务使用的连接名。
+     *
      * @return $this
      */
-    public function onConnection($connection)
+    public function onConnection(?string $connection): static
     {
         $this->connection = $connection;
 
@@ -36,11 +54,11 @@ trait Queueable
     }
 
     /**
-     * 设置队列名
-     * @param $queue
+     * 设置任务使用的队列名。
+     *
      * @return $this
      */
-    public function onQueue($queue)
+    public function onQueue(?string $queue): static
     {
         $this->queue = $queue;
 
@@ -48,11 +66,12 @@ trait Queueable
     }
 
     /**
-     * 设置延迟时间
-     * @param $delay
+     * 设置任务的延迟时间。
+     *
+     * @param \DateTimeInterface|int|null $delay 秒数（int）或 绝对时间（DateTimeInterface）
      * @return $this
      */
-    public function delay($delay)
+    public function delay($delay): static
     {
         $this->delay = $delay;
 

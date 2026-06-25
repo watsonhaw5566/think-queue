@@ -16,14 +16,9 @@ use think\queue\Job;
 
 class Sync extends Job
 {
-    /**
-     * The queue message data.
-     *
-     * @var string
-     */
-    protected $job;
+    protected string $job;
 
-    public function __construct(App $app, $job, $connection, $queue)
+    public function __construct(App $app, string $job, string $connection, string $queue)
     {
         $this->app        = $app;
         $this->connection = $connection;
@@ -31,35 +26,22 @@ class Sync extends Job
         $this->job        = $job;
     }
 
-    /**
-     * Get the number of times the job has been attempted.
-     * @return int
-     */
-    public function attempts()
+    public function attempts(): int
     {
         return 1;
     }
 
-    /**
-     * Get the raw body string for the job.
-     * @return string
-     */
-    public function getRawBody()
+    public function getRawBody(): string
     {
         return $this->job;
     }
 
-    /**
-     * Get the job identifier.
-     *
-     * @return string
-     */
-    public function getJobId()
+    public function getJobId(): string
     {
         return '';
     }
 
-    public function getQueue()
+    public function getQueue(): string
     {
         return 'sync';
     }

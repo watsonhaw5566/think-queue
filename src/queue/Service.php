@@ -2,6 +2,9 @@
 
 namespace think\queue;
 
+use think\App;
+use think\Config;
+use think\Event;
 use think\helper\Arr;
 use think\helper\Str;
 use think\Queue;
@@ -15,27 +18,35 @@ use think\queue\command\Retry;
 use think\queue\command\Table;
 use think\queue\command\Work;
 
+/**
+ * @property-read App    $app
+ * @property-read Config $config
+ * @property-read Event  $event
+ */
 class Service extends \think\Service
 {
-    public function register()
+    public function register(): void
     {
         $this->app->bind('queue', Queue::class);
-        $this->app->bind('queue.failer', function () {
-
+        $this->app->bind('queue.failer', function (): object {
             $config = $this->app->config->get('queue.failed', []);
+            if (!is_array($config)) {
+                $config = [];
+            }
 
-            $type = Arr::pull($config, 'type', 'none');
+            $type = (string) Arr::pull($config, 'type', 'none');
 
-            $class = false !== strpos($type, '\\') ? $type : '\\think\\queue\\failed\\' . Str::studly($type);
+            $class = str_contains($type, '\\')
+                ? $type
+                : '\\think\\queue\\failed\\' . Str::studly($type);
 
             return $this->app->invokeClass($class, [$config]);
         });
     }
 
-    public function boot()
+    public function boot(): void
     {
         $this->commands([
-            FailedJob::class,
             Table::class,
             FlushFailed::class,
             ForgetFailed::class,

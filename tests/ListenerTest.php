@@ -24,6 +24,8 @@ class ListenerTest extends TestCase
         $listener->shouldReceive('memoryExceeded')->once()->with(1)->andReturn(false);
 
         $listener->runProcess($process, 1);
+
+        $this->addToAssertionCount(1);
     }
 
     public function testListenerStopsWhenMemoryIsExceeded()
@@ -37,6 +39,8 @@ class ListenerTest extends TestCase
         $listener->shouldReceive('stop')->once();
 
         $listener->runProcess($process, 1);
+
+        $this->addToAssertionCount(1);
     }
 
     public function testMakeProcessCorrectlyFormatsCommandLine()
@@ -76,5 +80,38 @@ class ListenerTest extends TestCase
         $this->assertEquals(__DIR__, $process->getWorkingDirectory());
         $this->assertEquals(3, $process->getTimeout());
         $this->assertEquals($escape . PHP_BINARY . $escape . " {$escape}think{$escape} {$escape}queue:work{$escape} {$escape}--once{$escape} {$escape}--queue=queue{$escape} {$escape}--delay=1{$escape} {$escape}--memory=2{$escape} {$escape}--sleep=3{$escape} {$escape}--tries=0{$escape}", $process->getCommandLine());
+    }
+
+    public function testMakeProcessSetsWorkingDirectoryAndTimeout()
+    {
+        $listener = new Listener('/tmp');
+
+        $process = $listener->makeProcess('redis', 'high', 0, 3, 0, 128, 120);
+
+        $this->assertInstanceOf(Process::class, $process);
+        $this->assertEquals('/tmp', $process->getWorkingDirectory());
+        $this->assertEquals(120, $process->getTimeout());
+    }
+
+    public function testOutputHandlerIsInvokedForWorkerOutput()
+    {
+        $called = false;
+        $listener = new Listener(__DIR__);
+        $listener->setOutputHandler(function ($type, $line) use (&$called) {
+            $called = true;
+            $this->assertSame('out', $type);
+            $this->assertSame('hello', $line);
+        });
+
+        $process = m::mock(Process::class);
+        $process->shouldReceive('run')->once()->with(m::type('callable'))
+            ->andReturnUsing(function ($callback) {
+                $callback('out', 'hello');
+                return 0;
+            });
+
+        $listener->runProcess($process, 1024);
+
+        $this->assertTrue($called);
     }
 }

@@ -4,17 +4,14 @@ namespace think\queue\event;
 
 use think\queue\Job;
 
+/**
+ * 任务即将开始执行时触发。
+ */
 class JobProcessing
 {
-    /** @var string */
-    public $connection;
-
-    /** @var Job */
-    public $job;
-
-    public function __construct($connection, $job)
-    {
-        $this->connection = $connection;
-        $this->job        = $job;
+    public function __construct(
+        public readonly string $connection,
+        public readonly Job $job,
+    ) {
     }
 }

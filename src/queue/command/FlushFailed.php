@@ -6,13 +6,13 @@ use think\console\Command;
 
 class FlushFailed extends Command
 {
-    protected function configure()
+    protected function configure(): void
     {
         $this->setName('queue:flush')
             ->setDescription('Flush all of the failed queue jobs');
     }
 
-    public function handle()
+    public function handle(): void
     {
         $this->app->get('queue.failer')->flush();
 

@@ -21,45 +21,52 @@ use think\queue\connector\Redis;
  *
  * @mixin Database
  * @mixin Redis
+ *
+ * @property-read App    $app
+ * @property-read Config $config
+ * @property-read Event  $event
  */
 class Queue extends Manager
 {
+    /**
+     * 注意：此属性由父类 think\Manager 定义，父类未声明类型，
+     * 因此子类不能添加类型声明（PHP 运行时会报 "must not be defined" 致命错误）。
+     *
+     * @var string
+     */
     protected $namespace = '\\think\\queue\\connector\\';
 
-    protected function resolveType(string $name)
+    protected function resolveType(string $name): string
     {
-        return $this->app->config->get("queue.connections.{$name}.type", 'sync');
+        return (string) $this->app->config->get("queue.connections.{$name}.type", 'sync');
     }
 
-    protected function resolveConfig(string $name)
+    protected function resolveConfig(string $name): mixed
     {
         return $this->app->config->get("queue.connections.{$name}");
     }
 
-    protected function createDriver(string $name)
+    protected function createDriver(string $name): Connector
     {
         /** @var Connector $driver */
         $driver = parent::createDriver($name);
 
-        return $driver->setApp($this->app)
-            ->setConnection($name);
+        if (!$driver instanceof Connector) {
+            throw new \RuntimeException(
+                sprintf('Driver "%s" must be an instance of %s.', $name, Connector::class)
+            );
+        }
+
+        return $driver->setApp($this->app)->setConnection($name);
     }
 
-    /**
-     * @param null|string $name
-     * @return Connector
-     */
-    public function connection($name = null)
+    public function connection(?string $name = null): Connector
     {
         return $this->driver($name);
     }
 
-    /**
-     * 默认驱动
-     * @return string
-     */
-    public function getDefaultDriver()
+    public function getDefaultDriver(): string
     {
-        return $this->app->config->get('queue.default');
+        return (string) $this->app->config->get('queue.default');
     }
 }
