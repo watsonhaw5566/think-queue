@@ -71,6 +71,26 @@ class Sync extends Connector
 
     public function later(\DateTimeInterface|int $delay, object|string $job, mixed $data = '', ?string $queue = null): int
     {
+        // Sync connector executes jobs immediately within the current process;
+        // there is no persistent queue or background worker to honor a delay.
+        // Therefore the $delay parameter cannot be meaningfully applied here.
+        // Switch to the Redis or Database connector in production when you
+        // genuinely need deferred execution.
+        $delayDesc = $delay instanceof \DateTimeInterface
+            ? $delay->format('Y-m-d H:i:s')
+            : $delay . 's';
+
+        $jobName = is_object($job) ? get_class($job) : (string) $job;
+
+        @trigger_error(
+            sprintf(
+                '[queue] sync connector ignores delay (%s) for job %s; executing immediately. '
+                . 'Use the Redis or Database connector for genuine deferred execution.',
+                $delayDesc,
+                $jobName
+            )
+        );
+
         return $this->push($job, $data, $queue);
     }
 }
