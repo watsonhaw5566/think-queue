@@ -28,7 +28,13 @@ use think\queue\connector\Redis;
  */
 class Queue extends Manager
 {
-    protected string $namespace = '\\think\\queue\\connector\\';
+    /**
+     * 注意：此属性由父类 think\Manager 定义，父类未声明类型，
+     * 因此子类不能添加类型声明（PHP 运行时会报 "must not be defined" 致命错误）。
+     *
+     * @var string
+     */
+    protected $namespace = '\\think\\queue\\connector\\';
 
     protected function resolveType(string $name): string
     {

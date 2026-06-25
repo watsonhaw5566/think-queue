@@ -70,7 +70,7 @@ class Listener
     }
 
     public function makeProcess(
-        string $connection,
+        ?string $connection,
         string $queue,
         int $delay,
         int $sleep,
